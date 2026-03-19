@@ -1,0 +1,45 @@
+{
+  "ia": "Z.AI",
+  "fecha": "2026-03-01",
+  "partido": "Arsenal vs Chelsea",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Arsenal viene de golear 4-1 a Tottenham y no pierde con Chelsea desde 2021 (7V-3E en últimos 10). El contexto de lucha por el título aumenta la motivación local.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Chelsea presenta baja sensible de Wesley Fofana (sanción) y Cucurella (lesión), obligando a una defensa reformulada con Tosin-Chalobah y laterales cruzados.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Chelsea tiene el xG más alto de la liga (52.3) pero infraperforma goleador; potencial amenaza a pesar de las bajas defensivas.",
+      "impacto": "medio",
+      "direccion": "favor_visit"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "xG_ratio"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Arsenal",
+    "cuota": 1.57,
+    "probabilidad_estimada": 0.68,
+    "probabilidad_implicita": 0.637,
+    "valor_esperado": 0.068,
+    "confianza": 0.73,
+    "stake_recomendado": "2.5 unidades",
+    "razonamiento": "Valor identificado: mi probabilidad estimada (68%) supera la probabilidad implícita del mercado (63.7%). El diferencial de 4.3% justifica el pick. Factores determinantes: localía en Emirates donde Chelsea no gana en Premier desde 2021, bajas defensivas críticas en Chelsea (Fofana sancionado, Cucurella lesionado) y momentum positivo de Arsenal tras el 4-1 vs Spurs. La confianza (0.73) es sólida aunque el VE es moderado."
+  },
+  "alternativas_consideradas": [
+    {"mercado": "Hándicap", "seleccion": "Arsenal -1.0", "cuota": 1.97, "descartado_por": "Aunque el análisis sugiere victoria local, el historial reciente muestra varios triunfos por 1 gol de diferencia o empates. El riesgo de no cubrir el hándicap reduce el valor esperado por debajo del umbral."},
+    {"mercado": "Over/Under", "seleccion": "Over 2.5", "cuota": 1.64, "descartado_por": "Probabilidad estimada (62%) muy cercana a la implícita (61%). Sin margen de valor suficiente para justificar el pick."},
+    {"mercado": "1X2", "seleccion": "Chelsea", "cuota": 6.0, "descartado_por": "A pesar del alto xG de Chelsea, las bajas defensivas combinadas con el historial negativo en Emirates y la necesidad de puntos de Arsenal hacen que la probabilidad real (~13%) no justifique la cuota implícita (~17%)."}
+  ],
+  "riesgos": [
+    "Arsenal presenta alta tasa de goles encajados por errores individuales (44% en 2026), lo que Chelsea puede explotar.",
+    "Chelsea subestimado por el mercado: tiene el xG más alto de la liga (52.3), indicando peligro ofensivo real.",
+    "Posible rotación o baja forma física de Saka y Havertz mencionados como dudas; si no son titulares, el poder ofensivo local disminuye."
+  ]
+}

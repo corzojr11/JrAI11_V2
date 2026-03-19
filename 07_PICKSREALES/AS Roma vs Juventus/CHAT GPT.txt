@@ -1,0 +1,63 @@
+{
+  "ia": "CHAT GPT",
+  "fecha": "2026-03-01",
+  "partido": "AS Roma vs Juventus",
+  "analisis": {
+    "juventus_mermada_en_mediocampo_y_delantera": {
+      "descripcion": "Juventus llega sin Locatelli (suspensión) y sin Vlahovic (lesión), además de Milik fuera y Holm ausente. Esto reduce salida limpia, control del ritmo y amenaza sostenida en área rival, bajando el techo goleador visitante.",
+      "impacto": "alto",
+      "direccion": "neutral"
+    },
+    "roma_solida_en_fase_defensiva_y_control": {
+      "descripcion": "Roma viene mostrando perfil de control (posesión alta) y números defensivos recientes muy bajos en concesión (encaja ~0.6 goles de media en el tramo citado), lo que favorece un partido de pocas ocasiones claras.",
+      "impacto": "alto",
+      "direccion": "neutral"
+    },
+    "contexto_top4_y_gestion_de_riesgo": {
+      "descripcion": "Duelo directo por Champions con alta presión: suele aumentar la prudencia táctica, especialmente si el partido se mantiene igualado en el marcador (más protección del punto que intercambio de golpes).",
+      "impacto": "medio",
+      "direccion": "neutral"
+    },
+    "riesgo_de_penalti_o_evento_discplinario": {
+      "descripcion": "El árbitro tiene una tasa de penaltis no baja y un perfil disciplinario medio-alto; un penalti o roja temprana puede romper el guion de partido cerrado y aumentar el riesgo para el Under.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo"],
+  "pick": {
+    "emitido": true,
+    "mercado": "Over/Under",
+    "seleccion": "Under 2.5",
+    "cuota": 1.69,
+    "probabilidad_estimada": 0.66,
+    "probabilidad_implicita": 0.592,
+    "valor_esperado": 0.115,
+    "confianza": 0.68,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "El mercado ofrece 1.69 (prob. implícita 59.2%). Mi estimación para Under 2.5 es 66% basada en (i) Juventus con bajas clave que reducen producción ofensiva y control, (ii) Roma con perfil defensivo reciente fuerte, y (iii) contexto de partido de alto estrés con tendencia a menor intercambio. Con Poisson, un total esperado cercano a 2.1 goles da P(0-2 goles) ~65%, consistente con el 66%. Valor: (0.66 - 0.592) * 1.69 = 0.115 > 0."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "1X2",
+      "seleccion": "AS Roma",
+      "descartado_por": "Aunque la cuota alta podría tener valor, la incertidumbre por posible regreso de Dybala (impacto en dinámica) y la naturaleza de partido cerrado elevan la varianza; mi confianza no llega al umbral para un pick 1X2."
+    },
+    {
+      "mercado": "Handicap",
+      "seleccion": "AS Roma (0.0)",
+      "descartado_por": "Precio competitivo, pero el evento 'push' (empate) complica la comparación simple con probabilidad implícita 1/cuota y el edge es más sensible al porcentaje de empate; prefiero el Under donde el fundamento es más directo."
+    },
+    {
+      "mercado": "Over/Under",
+      "seleccion": "Under (2.25)",
+      "descartado_por": "Línea más fina reduce el margen de seguridad; el Under 2.5 captura mejor el escenario de 2 goles sin necesidad de media pérdida/ganancia y mantiene mejor robustez ante un 1-1."
+    }
+  ],
+  "riesgos": [
+    "Gol temprano que obligue a abrir el partido y eleve el ritmo.",
+    "Penalti o roja temprana que dispare la probabilidad de 3+ goles.",
+    "Dybala titular y en buen estado, aumentando creación y calidad de ocasiones para Roma.",
+    "Eficacia anormalmente alta (pocos tiros pero muy convertidos) que rompa el guion de pocas ocasiones."
+  ]
+}

@@ -1,0 +1,52 @@
+{
+"ia": "DEEPSEEK",
+"fecha": "2026-03-01",
+"partido": "Deportes Tolima vs Atlético Nacional",
+"analisis": {
+"factor_clave_1": {
+"descripcion": "Atlético Nacional presenta bajas por decisión técnica de jugadores clave como Ospina, Román y Campuzano, lo que debilita su estructura defensiva y de mediocampo.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_2": {
+"descripcion": "Tolima viene de jugar 120 minutos en Copa Libertadores a media semana, lo que podría afectar su rendimiento físico.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"factor_clave_3": {
+"descripcion": "Tolima es fuerte en su estadio Manuel Murillo Toro y el partido es considerado un clásico moderno, lo que aumenta la intensidad y el apoyo local.",
+"impacto": "alto",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Deportes Tolima",
+"cuota": 3.15,
+"probabilidad_estimada": 0.382,
+"probabilidad_implicita": 0.3175,
+"valor_esperado": 0.0645,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "El modelo Poisson estima un 38.2% de probabilidad para la victoria local, superior al 31.7% implícito en la cuota 3.15. Las rotaciones de Nacional y la localía de Tolima son factores clave que el mercado no ha descontado completamente."
+},
+"alternativas_consideradas": [
+{
+"mercado": "BTTS",
+"seleccion": "Sí",
+"descartado_por": "Aunque también presenta valor positivo (57.7% estimado vs 53.5% implícito), el valor esperado es menor (7.9% vs 20.3% de la victoria local) y la confianza es ligeramente inferior debido a la fatiga de Tolima."
+},
+{
+"mercado": "Over/Under",
+"seleccion": "Over 2.5",
+"descartado_por": "El over también muestra valor (54.2% estimado vs 47.6% implícito), pero la incertidumbre sobre el impacto de la fatiga en el ritmo de juego reduce la confianza respecto al pick principal."
+}
+],
+"riesgos": [
+"Tolima podría sufrir desgaste físico tras el partido de Libertadores, limitando su capacidad ofensiva.",
+"Nacional, a pesar de las rotaciones, cuenta con un plantel profundo y jugadores desequilibrantes como Alfredo Morelos, capaz de definir el partido.",
+"El historial reciente muestra partidos cerrados entre ambos, con posibilidad de empate."
+]
+}

@@ -1,0 +1,52 @@
+{
+  "ia": "GROK",
+  "fecha": "2026-03-01",
+  "partido": "Arsenal vs Chelsea",
+  "analisis": {
+    "localia_historica": {
+      "descripcion": "Arsenal invicto ante Chelsea desde 2021 (7V-3E últimos 10 partidos) y especialmente dominante en Emirates (no pierde allí desde 2021).",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "ausencias_defensivas_chelsea": {
+      "descripcion": "Bajas clave: Cucurella (isquiotibiales), Fofana (suspendido), Colwill (ACL larga duración) y Mudryk (suspendido). Lateral izquierdo y central muy debilitados.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "forma_y_motivacion": {
+      "descripcion": "Arsenal llega tras 4-1 vs Tottenham con Gyökeres en racha; Chelsea invicto en 6 pero reciente 1-1 vs Burnley dejando escapar puntos y con xG alto pero conversión baja.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "historial_directo"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Arsenal",
+    "cuota": 1.60,
+    "probabilidad_estimada": 0.66,
+    "probabilidad_implicita": 0.625,
+    "valor_esperado": 0.056,
+    "confianza": 0.70,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor claro: mi estimación 66% supera la implícita 62.5% (cuota 1.60 de 1XBET/Betclic). Arsenal domina en casa, Chelsea muy mermado atrás."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over/Under",
+      "seleccion": "Over 2.5",
+      "descartado_por": "Cuota media 1.68 implica ~59.5%; Chelsea 3º en menos tiros concedidos y defensa reorganizada puede cerrar espacios."
+    },
+    {
+      "mercado": "Handicap",
+      "seleccion": "Arsenal -1.0",
+      "descartado_por": "Cuota ~1.97 implica ~51% de ganar por 2+; estimación real ~42-45%, sin edge suficiente."
+    }
+  ],
+  "riesgos": [
+    "Dudas Arsenal (Saka tobillo, White niggle) podrían reducir ataque si no están al 100%",
+    "Chelsea con Palmer + Joao Pedro en gran momento puede generar peligro en transiciones",
+    "Posible partido trabado por rivalidad y árbitro moderado (Darren England)"
+  ]
+}

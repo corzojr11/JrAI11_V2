@@ -1,0 +1,68 @@
+{
+  "ia": "Kimi",
+  "fecha": "2026-03-01",
+  "partido": "AS Roma vs Juventus",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Fatiga y calendario: Juventus llega tras eliminación en Champions (prórroga vs Galatasaray), derrotas consecutivas vs Inter y Como, y viaje matutino. Roma con semana completa de descanso y sin desplazamientos.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Bajas clave: Juventus sin Locatelli (suspendido), Vlahović y Milik (lesionados). Posible retorno de Dybala para Roma tras 4 partidos fuera, aunque en duda.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Estado anímico: Juventus en crisis física/mental post-eliminación europea con presión sobre Spalletti. Roma en crecimiento respecto a hace 3 meses y con 'prueba definitoria' de motivación máxima.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_4": {
+      "descripcion": "Localía y estilo: Roma 56.6% posesión, 0.6 goles encajados/media, 8.2 córners favor en casa. Juventus con medias de 5.0 córners fuera y 4.1 en contra.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_clave_5": {
+      "descripcion": "Árbitro Simone Sozza: 4.44 tarjetas/media, historial equilibrado con ambos equipos. No sesgo detectado.",
+      "impacto": "bajo",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "ajuste_contextual"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "AS Roma",
+    "cuota": 2.75,
+    "probabilidad_estimada": 0.42,
+    "probabilidad_implicita": 0.364,
+    "valor_esperado": 0.154,
+    "confianza": 0.68,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado en Roma @2.75 (Pinnacle). Mi estimación 42% vs mercado 36.4% = EV +15.4%. Factores determinantes: (1) Juventus con fatiga extrema post-Champions y 2 derrotas seguidas, (2) Bajas críticas juventinas (Locatelli, Vlahović, Milik) vs posible retorno de Dybala, (3) Contexto psicológico favorable a Roma con semana de preparación vs crisis bianconera, (4) Dominio estadístico local en posesión y córners. Confianza 0.68 justifica stake moderado."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over/Under",
+      "seleccion": "Under 2.5",
+      "descartado_por": "Cuota 1.62-1.67 implícita 60-62%, pero con bajas defensivas de Juventus y posible apertura del partido, el valor es marginal. Preferir el 1X2 directo."
+    },
+    {
+      "mercado": "Hándicap",
+      "seleccion": "Roma (0.0)",
+      "descartado_por": "Cuota 1.88-1.90 vs 2.75 del 1X2. El draw no return reduce el valor potencial; el 1X2 ofrece mejor relación riesgo/beneficio."
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Juventus",
+      "descartado_por": "Cuota 3.0 implícita 33.3%, pero estimación real ~28% considerando fatiga y bajas. Sin valor."
+    }
+  ],
+  "riesgos": [
+    "Paulo Dybala podría no estar al 100% o no jugar, afectando creatividad ofensiva de Roma",
+    "Juventus es históricamente 'gallo' en partidos grandes y podría reaccionar en crisis",
+    "Simone Sozza ya pitó Juventus 2-1 Roma esta temporada; posible sesgo inconsciente",
+    "Partido de alta tensión por Champions puede resultar en táctica conservadora que favorezca empate"
+  ]
+}

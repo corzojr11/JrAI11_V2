@@ -1,0 +1,67 @@
+{
+"ia": "CHATGPT",
+"fecha": "2026-03-01",
+"partido": "Deportes Tolima vs Atlético Nacional",
+"analisis": {
+"forma_y_eficacia_reciente": {
+"descripcion": "Atlético Nacional llega con rendimiento liguero superior (5G-0E-1P, DG +11) y un ataque muy productivo en el semestre (15 GF en 6). Tolima está sólido pero menos dominante (3G-3E-2P, DG +3; 10 GF en 8). Esto empuja el mercado hacia Nacional, pero ya está parcialmente incorporado en la cuota visitante.",
+"impacto": "alto",
+"direccion": "favor_visit"
+},
+"localia_y_contexto_competitivo": {
+"descripcion": "Tolima es fuerte en Ibagué y el partido tiene perfil de alta intensidad (rivalidad reciente y tabla alta). Esto reduce la confianza en un 1X2 directo a favor del visitante.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fatiga_y_rotacion": {
+"descripcion": "Tolima viene de una semana exigente (incluye partido internacional con prórroga/penales) y Nacional también enfrenta una secuencia de 3 partidos en 7 días, lo que eleva incertidumbre de rotaciones y ritmo real del juego.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"bajas_confirmadas_y_efecto_en_varianza": {
+"descripcion": "Nacional no cuenta con Ospina, Román y Campuzano (decisión técnica). Aunque no necesariamente baja el techo del equipo, sí aumenta la varianza (menos continuidad/experiencia en piezas clave), lo cual castiga apuestas de alta convicción.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"lectura_de_mercado_en_totales": {
+"descripcion": "El mercado marca Under 2.5 como favorito (1.70–1.73), pero los datos de goles de ambos en el semestre no sostienen una ventaja clara para el Under a ese precio: Tolima promedia ~2.1 goles totales por partido en liga y Nacional ~3.2, lo que hace difícil superar la probabilidad implícita requerida sin sobreajuste.",
+"impacto": "alto",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": false,
+"mercado": null,
+"seleccion": "NO BET",
+"cuota": null,
+"probabilidad_estimada": null,
+"probabilidad_implicita": null,
+"valor_esperado": null,
+"confianza": null,
+"stake_recomendado": null,
+"razonamiento": "No hay valor claro con confianza >= 0.65 usando solo las cuotas del archivo. Under 2.5 exige ~57.8% (cuota 1.73) y con el perfil goleador reciente de Nacional (15 GF/6) no puedo justificar una probabilidad superior con rigor. En 1X2, la victoria de Nacional a 2.43 implica ~41.2%; mi estimación estaría apenas por encima (margen pequeño) y la varianza por localía/rotación no permite alcanzar el umbral de confianza."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Under 2.5 @ 1.73 (BETPLAY)",
+"descartado_por": "Probabilidad implícita alta (~0.578) sin respaldo estadístico fuerte: Nacional eleva el total esperado de goles; falta edge suficiente para EV+ con confianza >= 0.65."
+},
+{
+"mercado": "1X2",
+"seleccion": "Atlético Nacional @ 2.43 (BETPLAY)",
+"descartado_por": "Aunque la cuota es la mejor disponible para el visitante, el edge estimado es pequeño y la incertidumbre por localía + posible rotación impide confianza >= 0.65."
+},
+{
+"mercado": "BTTS",
+"seleccion": "BTTS Sí @ 1.87 (BETANO)",
+"descartado_por": "Tolima puede anotar en casa, pero la defensa de Nacional ha concedido poco en liga (4 GC/6), y no hay información confirmada de XI que permita elevar la estimación por encima de la implícita (~0.535) con margen suficiente."
+}
+],
+"riesgos": [
+"Alineaciones no confirmadas: posibles rotaciones por calendario en ambos equipos cambian el match-up real.",
+"Alta varianza por contexto de rivalidad y presión: eventos (rojas/penales) pueden romper cualquier lectura de totales.",
+"Datos incompletos de bajas específicas de Tolima para fecha 9: incertidumbre en disponibilidad ofensiva/defensiva."
+]
+}

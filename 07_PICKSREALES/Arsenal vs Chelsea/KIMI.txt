@@ -1,0 +1,68 @@
+{
+  "ia": "KIMI",
+  "fecha": "2026-03-01",
+  "partido": "Arsenal vs Chelsea",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Arsenal invicto en casa vs Chelsea desde 2021, racha de 7 victorias y 3 empates en últimos 10 enfrentamientos. Chelsea sin victoria en Emirates desde 2021.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Bajas defensivas críticas en Chelsea: Cucurella (LI), Fofana (suspensión), Colwill (ACL). Lateral izquierdo reconvertido (Gusto) expuesto ante ataque de Arsenal por banda izquierda.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Arsenal viene de goleada 4-1 vs Tottenham con Gyökeres en racha; Chelsea de empate 1-1 vs Burnley dejando escapar ventaja. Diferencia de momentum clara.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_clave_4": {
+      "descripcion": "Chelsea lidera xG de la liga (52.3) pero infraperforma en goles. Potencial 'corrección' positiva existe pero choca contra defensa sólida de Arsenal (Saliba-Gabriel).",
+      "impacto": "medio",
+      "direccion": "neutral"
+    },
+    "factor_clave_5": {
+      "descripcion": "Dudas en Arsenal: Saka (tobillo), White (niggle), Havertz (muslo). Sin embargo, Saka esperado disponible y alternativas (Madueke, Gyökeres) cubren ausencias potenciales.",
+      "impacto": "bajo",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "ajuste_contextual"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Arsenal",
+    "cuota": 1.6,
+    "probabilidad_estimada": 0.68,
+    "probabilidad_implicita": 0.625,
+    "valor_esperado": 0.088,
+    "confianza": 0.72,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado: estimación 68% vs mercado 62.5% (cuota 1.60). Factor determinante: defensa desmantelada de Chelsea (3 bajas en línea defensiva) vs ataque en racha de Arsenal. Historial reciente abrumadoramente favorable a Gunners (7V-3E en últimos 10). Riesgo controlado: dudas ofensivas de Arsenal son menores comparadas con crisis defensiva del rival."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over 2.5",
+      "seleccion": "Over",
+      "descartado_por": "Cuota 1.64-1.75 no ofrece valor suficiente. Chelsea infraperforma xG y Arsenal puede controlar ritmo si marca temprano."
+    },
+    {
+      "mercado": "Handicap -1 Arsenal",
+      "seleccion": "Arsenal -1",
+      "descartado_por": "Cuota ~1.95-2.0 con probabilidad estimada 52%, sin margen de valor positivo suficiente (EV ≈ 0.02)."
+    },
+    {
+      "mercado": "BTTS",
+      "seleccion": "Sí",
+      "descartado_por": "Chelsea genera xG pero enfrenta a mejor defensa de la liga. Probabilidad estimada 55% vs cuota implícita ~58% (cuota 1.72), sin valor."
+    }
+  ],
+  "riesgos": [
+    "Saka no recupera al 100% y pierde profundidad por banda derecha",
+    "Chelsea materializa su xG acumulado en 'corrección' ofensiva imprevista",
+    "Arsenal repite errores individuales (44% goles encajados 2026 por este motivo)",
+    "Darren England (árbitro) histórico favorable a Chelsea en penaltis (3 a favor, 0 en contra)"
+  ]
+}

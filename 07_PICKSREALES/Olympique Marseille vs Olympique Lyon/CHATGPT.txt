@@ -1,0 +1,62 @@
+{
+"ia": "CHATGPT",
+"fecha": "2026-03-01",
+"partido": "Olympique Marseille vs Olympique Lyon",
+"analisis": {
+"factor_clave_1": {
+"descripcion": "Incertidumbre relevante en bajas de Marseille (fuentes contradictorias sobre indisponibles) que afecta directamente la estimación de rendimiento defensivo/portería y reduce la fiabilidad de cualquier modelo previo al XI oficial.",
+"impacto": "alto",
+"direccion": "neutral"
+},
+"factor_clave_2": {
+"descripcion": "Lyon llega con ausencias ofensivas importantes ampliamente reportadas (extremos fuera y duda/posible baja del máximo goleador), lo que tiende a bajar su techo de gol y su probabilidad real de victoria a domicilio, pero el mercado ya lo refleja parcialmente en precios altos del 1X2.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_3": {
+"descripcion": "Señales mixtas en mercado de goles: tendencias recientes apuntan a partidos abiertos (Over 2.5 alrededor de 1.8–1.93), pero la merma ofensiva de Lyon empuja al Under; la dirección neta es ambigua sin confirmación de XI.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"factor_clave_4": {
+"descripcion": "Localía fuerte de Marseille (rendimiento sólido en el Vélodrome) vs Lyon competitivo en la temporada; el choque de estilos sugiere partido tenso y de alta varianza (clásico), lo que penaliza la confianza en líneas cercanas al 50/50.",
+"impacto": "medio",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": false,
+"mercado": "NO BET",
+"seleccion": "NO BET",
+"cuota": null,
+"probabilidad_estimada": null,
+"probabilidad_implicita": null,
+"valor_esperado": null,
+"confianza": 0.0,
+"stake_recomendado": "0 unidades",
+"razonamiento": "No hay valor claro con confianza >= 0.65: (1) la incertidumbre sobre bajas de Marseille (especialmente si afectan portería/central) introduce un rango amplio en probabilidades; (2) los mercados más tentadores (Marseille ML y Over/Under 2.5) quedan con edge pequeño o dependiente del XI; (3) no puedo sostener una probabilidad estimada suficientemente superior a la implícita sin forzar supuestos."
+},
+"alternativas_consideradas": [
+{
+"mercado": "1X2",
+"seleccion": "Marseille",
+"descartado_por": "Mejor cuota disponible 2.05 (implícita 0.488). Estimación razonable de victoria local queda demasiado cerca del 0.49–0.52 y la incertidumbre por posibles bajas reduce la confianza por debajo de 0.65."
+},
+{
+"mercado": "Over/Under",
+"seleccion": "Over 2.5 @ 1.93",
+"descartado_por": "Cuota 1.93 (implícita 0.518). Señales contradictorias: tendencia a partido abierto vs ataque de Lyon mermado; el edge no es robusto y la confianza no alcanza 0.65."
+},
+{
+"mercado": "Handicap",
+"seleccion": "Lyon +0.5 @ 1.95",
+"descartado_por": "Cuota 1.95 (implícita 0.513). A pesar de que podría capturar un escenario de empate, las bajas ofensivas de Lyon y la localía fuerte de Marseille hacen que el rango probable de no-derrota sea demasiado incierto para asegurar valor con confianza >= 0.65."
+}
+],
+"riesgos": [
+"Alineaciones reales pueden cambiar el partido: si Marseille confirma bajas clave (portería/central), se altera tanto 1X2 como totales.",
+"Alta varianza típica de un clásico (tarjetas, penaltis, expulsiones) puede invalidar lecturas de forma/Poisson con facilidad.",
+"El mercado ya incorpora parte de la información de lesiones de Lyon; el valor residual puede ser marginal."
+]
+}

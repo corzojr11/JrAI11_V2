@@ -1,0 +1,68 @@
+{
+  "ia": "KIMI",
+  "fecha": "2026-03-01",
+  "partido": "Deportes Tolima vs Atlético Nacional",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Atlético Nacional llega con mejor rendimiento (5V-1D, 15 pts) vs Tolima (3V-3E-2D, 12 pts). Nacional muestra superioridad ofensiva (15 GF vs 10 GF) y defensiva (4 GC vs 7 GC). Sin embargo, Tolima juega en casa donde es tradicionalmente fuerte.",
+      "impacto": "alto",
+      "direccion": "favor_visit"
+    },
+    "factor_clave_2": {
+      "descripcion": "Fatiga acumulada: Tolima viene de jugar 120 minutos + penales en Copa Libertadores hace 3 días, sumado a viaje largo a Cúcuta. Nacional también tiene calendario apretado (3 partidos en 6 días) pero viene con mejor descanso relativo.",
+      "impacto": "medio",
+      "direccion": "favor_visit"
+    },
+    "factor_clave_3": {
+      "descripcion": "Bajas sensibles en Nacional: David Ospina, Andrés Román, Jorman Campuzano y Nicolás Rodríguez ausentes por decisión técnica. Aunque William Tesillo regresa, la ausencia del arquero titular reduce seguridad defensiva.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_clave_4": {
+      "descripcion": "Estadísticas de goles sugieren partido cerrado. Media de goles de Tolima: 2.10 totales por partido. Nacional fuera de casa: 2.70 totales. Mercado espera pocos goles (Under 2.5 favorito @ 1.70).",
+      "impacto": "medio",
+      "direccion": "neutral"
+    },
+    "factor_clave_5": {
+      "descripcion": "Rivalidad intensa ('clásico moderno') con historial reciente parejo (últimos 5 partidos: 0-0, 4-3, 2-0, 1-1, 1-0). Partidos disputados tienden a ser cerrados.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "ajuste_contextual"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Atlético Nacional",
+    "cuota": 2.35,
+    "probabilidad_estimada": 0.48,
+    "probabilidad_implicita": 0.426,
+    "valor_esperado": 0.127,
+    "confianza": 0.68,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado en la victoria visitante. Mi estimación de 48% supera la probabilidad implícita del mercado (42.6%). A pesar de las bajas técnicas, Nacional mantiene mejor nivel competitivo, Tolima muestra fatiga evidente post-Libertadores, y la cuota 2.35 (Betano) ofrece margen atractivo. El rendimiento de 83% de efectividad de Nacional vs 50% de Tolima es determinante."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Under 2.5",
+      "seleccion": "Under 2.5 goles",
+      "descartado_por": "Cuota 1.70 implica probabilidad implícita 58.8%, pero mi estimación es 55%. Sin valor positivo suficiente (confianza 0.62 < 0.65)"
+    },
+    {
+      "mercado": "BTTS",
+      "seleccion": "Sí",
+      "descartado_por": "Cuota 1.87 vs estimación 52%. Valor marginal pero confianza insuficiente (0.63) dado el factor Ospina ausente y posible rotación ofensiva"
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Deportes Tolima",
+      "descartado_por": "Cuota 3.15 requiere probabilidad >31.7%, mi estimación es 28%. Sin valor, además del factor fatiga post-internacional"
+    }
+  ],
+  "riesgos": [
+    "Ausencia de Ospina puede generar inseguridad defensiva en momentos clave",
+    "Fatiga de Tolima en casa puede ser contrarrestada por factor público en estadio lleno",
+    "Calendario apretado de Nacional (3 partidos en 6 días) puede generar rotación inesperada",
+    "Partido de 'clásico moderno' con alta tensión puede derivar en expulsiones o incidentes que alteren el desarrollo"
+  ]
+}

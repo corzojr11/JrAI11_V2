@@ -1,0 +1,54 @@
+{
+"ia": "GEMINI",
+"fecha": "2026-03-01",
+"partido": "AS Roma vs Juventus",
+"analisis": {
+"fatiga_visitante": {
+"descripcion": "Juventus viene de jugar 120 minutos en Turquía en competiciones europeas y acumula viajes, frente a una Roma con semana completa de descanso.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"ausencias_clave_juventus": {
+"descripcion": "Bajas sensibles de Vlahović (principal arma ofensiva) y Locatelli (sancionado, ancla del mediocampo), afectando severamente su estructura.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fortaleza_defensiva_roma": {
+"descripcion": "Roma promedia solo 0.6 goles en contra y domina la posesión en casa, limitando las opciones de una Juve muy mermada en ataque.",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": [
+"poisson_avanzado",
+"elo_ajustado_por_fatiga"
+],
+"pick": {
+"emitido": true,
+"mercado": "Handicap",
+"seleccion": "AS Roma (0.0)",
+"cuota": 1.9,
+"probabilidad_estimada": 0.62,
+"probabilidad_implicita": 0.526,
+"valor_esperado": 0.094,
+"confianza": 0.75,
+"stake_recomendado": "1.5 unidades",
+"razonamiento": "El mercado no ajusta lo suficiente la tremenda ventaja física de la Roma. La Juventus llega mental y físicamente agotada tras una prórroga y eliminación en Turquía, además de perder a su goleador (Vlahović) y su organizador (Locatelli). El hándicap 0.0 (equivalente a Empate No Apuesta) a cuota 1.90 en Matchbook ofrece valor positivo claro."
+},
+"alternativas_consideradas": [
+{
+"mercado": "1X2",
+"seleccion": "AS Roma",
+"descartado_por": "Aunque la victoria directa (cuota ~2.75) tiene valor, el perfil rocoso de la Juventus con el retorno de Bremer eleva el riesgo de empate. El Hándicap 0.0 mitiga esta varianza."
+},
+{
+"mercado": "Over/Under",
+"seleccion": "Under (2.5)",
+"descartado_por": "Las cuotas (1.57 - 1.69) ya reflejan la falta de pólvora ofensiva esperada. El valor matemático residual es marginal y no supera nuestro umbral."
+}
+],
+"riesgos": [
+"El regreso de Bremer y Kalulu solidifica sustancialmente la línea defensiva visitante.",
+"Si Dybala no es titular o recae de sus molestias, la Roma podría carecer de fluidez para romper un bloque bajo de la Juventus."
+]
+}

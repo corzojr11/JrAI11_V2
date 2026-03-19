@@ -1,0 +1,51 @@
+{
+"ia": "QWEN",
+"fecha": "2026-03-01",
+"partido": "AS Roma vs Juventus",
+"analisis": {
+"fatiga_y_calendario": {
+"descripcion": "Juventus llega tras eliminación en Champions con prórroga vs Galatasaray + derrotas consecutivas en Serie A (Inter 3-2, Como 2-0). Roma tiene semana completa de descanso.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"bajas_clave_juventus": {
+"descripcion": "Juventus sin Vlahović (goleador principal), Locatelli (capitán y eje del mediocampo suspendido), Holm y Milik. Roma solo duda con Dybala pero ha competido sin él.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"localia_y_forma": {
+"descripcion": "Roma en casa: 56.6% posesión media, 0.6 goles encajados/partido, 8.2 córners a favor en casa. Juventus con racha negativa y presión sobre Spalletti.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"factor_psicologico": {
+"descripcion": "Juventus en periodo 'difícil física y mentalmente'. Roma ve este partido como 'prueba definitoria' por Champions. Viaje de Juventus el mismo día del partido.",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson", "elo", "regresion_logistica"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "AS Roma",
+"cuota": 2.75,
+"probabilidad_estimada": 0.44,
+"probabilidad_implicita": 0.364,
+"valor_esperado": 0.21,
+"confianza": 0.72,
+"stake_recomendado": "2.5 unidades",
+"razonamiento": "Valor claro identificado: mi estimación 44% vs probabilidad implícita del mercado 36.4% (cuota 2.75 en Pinnacle). Edge de 7.6 puntos porcentuales. Factores clave: (1) Ventaja significativa de descanso - Roma con semana limpia vs Juventus con Champions + 2 derrotas consecutivas; (2) Bajas críticas de Juventus - Vlahović y Locatelli ausentes afectan capacidad ofensiva y control del mediocampo; (3) Fatiga mental acumulada en Juventus tras eliminación europea; (4) Roma en casa con sólidos números defensivos (0.6 goles encajados/partido). El mercado no parece descontar suficientemente el impacto de la fatiga y ausencias de Juventus."
+},
+"alternativas_consideradas": [
+{"mercado": "Asian Handicap 0.0", "seleccion": "AS Roma", "descartado_por": "Menor EV que 1X2 directo aunque menor varianza. Cuota 1.88 ofrece menos valor relativo."},
+{"mercado": "Under 2.5", "seleccion": "Under", "descartado_por": "Cuota 1.62 implica 61.7% probabilidad. Mi estimación 58% no supera el umbral de valor. Partido puede ser abierto por necesidad de puntos de ambos."},
+{"mercado": "1X2", "seleccion": "Empate", "descartado_por": "Cuota 3.03 implica 33% probabilidad. Mi estimación 28-30% no genera valor positivo."}
+],
+"riesgos": [
+"Dybala podría estar disponible y cambiar dinámica ofensiva de Roma (si juega sin ritmo puede ser negativo)",
+"Juventus con Bremer y Kalulu de regreso puede reforzar defensa significativamente",
+"Partido táctico entre dos equipos por Champions podría ser más cerrado de lo esperado",
+"Árbitro Simone Sozza promedia 0.39 penaltis/partido - posible impacto en resultado"
+]
+}

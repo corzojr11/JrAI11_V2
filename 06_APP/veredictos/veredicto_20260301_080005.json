@@ -1,0 +1,29 @@
+[
+  {
+    "Partido": "Borussia Dortmund vs Bayern M\u00fcnchen",
+    "Mercado": "Handicap",
+    "Seleccion": "Borussia Dortmund +1.0 (AH)",
+    "Cuota Promedio": 1.8,
+    "Consenso": 1,
+    "Confianza Ponderada": 0.69,
+    "Recomendacion": "Baja"
+  },
+  {
+    "Partido": "Le Havre AC vs Paris Saint-Germain",
+    "Mercado": "Handicap",
+    "Seleccion": "Paris Saint-Germain -1.5",
+    "Cuota Promedio": 1.92,
+    "Consenso": 1,
+    "Confianza Ponderada": 0.68,
+    "Recomendacion": "Baja"
+  },
+  {
+    "Partido": "Le Havre AC vs Paris Saint-Germain",
+    "Mercado": "H\u00e1ndicap",
+    "Seleccion": "Paris Saint-Germain (-1.5)",
+    "Cuota Promedio": 1.92,
+    "Consenso": 1,
+    "Confianza Ponderada": 0.68,
+    "Recomendacion": "Baja"
+  }
+]

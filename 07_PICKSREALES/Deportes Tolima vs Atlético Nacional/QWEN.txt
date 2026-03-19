@@ -1,0 +1,52 @@
+{
+"ia": "QWEN",
+"fecha": "2026-03-01",
+"partido": "Deportes Tolima vs Atlético Nacional",
+"analisis": {
+"forma_y_eficacia": {
+"descripcion": "Nacional registra 15 GF y 4 GC en 6 partidos de Liga (2.5 GF/partido), superior al 1.25 GF/partido de Tolima en 8 juegos. Diferencial de gol +11 vs +3 refleja mayor consistencia.",
+"impacto": "alto",
+"direccion": "favor_visit"
+},
+"fatiga_acumulada": {
+"descripcion": "Tolima jugó tiempo extra y penales en Copa Libertadores hace 3 días, más viaje a Cúcuta; Nacional tiene agenda congestionada pero sin desgaste de prórroga reciente.",
+"impacto": "medio",
+"direccion": "favor_visit"
+},
+"bajas_técnicas_nacional": {
+"descripcion": "Ausencias por decisión técnica de Ospina, Campuzano, Román y Rodríguez reducen experiencia, pero el plantel de Nacional mantiene profundidad competitiva.",
+"impacto": "medio",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": ["poisson", "elo", "regresion_logistica"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Atlético Nacional",
+"cuota": 2.37,
+"probabilidad_estimada": 0.48,
+"probabilidad_implicita": 0.422,
+"valor_esperado": 0.138,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor identificado: mi estimación del 48% para victoria visitante supera la probabilidad implícita del mercado (42.2%). Nacional muestra superioridad estadística en ataque y defensa, y Tolima arrastra fatiga de compromiso internacional con prórroga. Las bajas técnicas de Nacional están compensadas por profundidad del plantel."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Under 2.5",
+"descartado_por": "Valor marginal (estimación 62% vs implícita 58.5%), pero menor edge que el pick principal y mayor incertidumbre por posible lluvia."
+},
+{
+"mercado": "BTTS",
+"seleccion": "Sí",
+"descartado_por": "Probabilidad estimada ~55% cercana a la implícita (54.6%), sin edge suficiente para superar umbral de confianza."
+}
+],
+"riesgos": [
+"Rotaciones de Nacional por agenda congestionada (Copa Sudamericana el 4 de marzo).",
+"Condiciones climáticas en Ibagué: posible lluvia que podría alterar dinámica del partido.",
+"Factor emocional de 'clásico moderno': partidos de rivalidad suelen ser más impredecibles."
+]
+}

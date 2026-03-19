@@ -1,0 +1,65 @@
+{
+"ia": "CHAT GPT",
+"fecha": "2026-03-01",
+"partido": "Arsenal vs Chelsea",
+"analisis": {
+"factor_clave_1": {
+"descripcion": "Chelsea llega con bajas/limitaciones relevantes en defensa (Cucurella fuera; Fofana suspendido; Colwill baja larga), lo que degrada el costado izquierdo y la estabilidad de la pareja central prevista.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_2": {
+"descripcion": "Arsenal tiene dudas físicas en piezas de primer nivel (Saka, White, Havertz). Aunque se espera disponibilidad, cualquier limitación reduce techo ofensivo y continuidad del XI.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"factor_clave_3": {
+"descripcion": "Contexto competitivo y localía: Arsenal llega con impulso reciente (4-1 al Tottenham) y fortaleza en Emirates; además, racha H2H reciente favorable (sin derrotas desde 2021 según el resumen).",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_4": {
+"descripcion": "Mercado principal muy eficiente (líneas cercanas a Pinnacle y convergencia entre casas). Sin información cuantitativa adicional (xG específicos recientes por equipo/ajustes), el margen para detectar desalineación clara es bajo.",
+"impacto": "alto",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": [
+"poisson",
+"elo"
+],
+"pick": {
+"emitido": false,
+"mercado": null,
+"seleccion": "NO BET",
+"cuota": null,
+"probabilidad_estimada": null,
+"probabilidad_implicita": null,
+"valor_esperado": null,
+"confianza": 0.62,
+"stake_recomendado": null,
+"razonamiento": "No hay valor claro con confianza >= 0.65. Las opciones con mejor pinta (Arsenal ML @1.61 y Over 2.75 @1.96) solo muestran ventajas teóricas pequeñas (EV ~1-2%) altamente sensibles a la incertidumbre de alineaciones (Saka/White/Havertz y James) y a que el mercado ya descuenta la mayoría de bajas. Con este nivel de edge, no cumplo el umbral de confianza."
+},
+"alternativas_consideradas": [
+{
+"mercado": "1X2",
+"seleccion": "Arsenal",
+"descartado_por": "Cuota 1.61 implica 0.621. Mi estimación prudente ~0.63 (margen mínimo). EV aprox = 0.631.61-1 = 0.014. Edge demasiado pequeño para exigir confianza >=0.65."
+},
+{
+"mercado": "Over/Under",
+"seleccion": "Over (2.75)",
+"descartado_por": "Cuota 1.96 implica 0.510. Mi estimación ~0.52 por matchup y bajas defensivas, EV aprox = 0.521.96-1 = 0.019, pero la variancia del derbi y el buen perfil defensivo de Chelsea (pocos tiros concedidos) reducen la confianza por debajo del umbral."
+},
+{
+"mercado": "Handicap",
+"seleccion": "Chelsea (1.5)",
+"descartado_por": "Cuota 1.52 implica 0.658. Con Arsenal favorito, estimo probabilidad apenas ~0.66; EV ~0.003. Sin valor."
+}
+],
+"riesgos": [
+"Incertidumbre de titulares/limitaciones físicas (Saka, White, Havertz; y en Chelsea, Reece James) puede mover la verdadera probabilidad varios puntos.",
+"Derbi londinense: volatilidad táctica y emocional; un gol temprano cambia por completo el guion y afecta especialmente mercados de totales/handicap.",
+"El mercado (especialmente líneas tipo Pinnacle) suele incorporar bien información de lesiones; riesgo alto de sobreestimar el impacto ya descontado."
+]
+}

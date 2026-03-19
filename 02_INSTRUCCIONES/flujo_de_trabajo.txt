@@ -1,0 +1,58 @@
+
+---
+
+## 📝 PASO 1: SCOUT
+
+**Herramienta:** Perplexity (o la IA que uses para búsquedas)
+
+**Prompt:** `01_PROMPTS/scout_prompt.txt`
+
+**Acción:** Pide los partidos del día. Ejemplo: "Partidos de hoy con mejores oportunidades de apuesta".
+
+**Resultado:** Lista de 3-5 partidos con formato.
+
+---
+
+## 📝 PASO 2: INVESTIGADOR
+
+**Herramienta:** Perplexity
+
+**Prompt:** `01_PROMPTS/investigador_prompt.txt`
+
+**Acción:** Para CADA partido de la lista del scout, ejecuta el prompt del investigador pegando el nombre del partido.
+
+**Resultado:** Un resumen ejecutivo detallado por partido.
+
+---
+
+## 📝 PASO 3: ANALISTAS
+
+**Herramienta:** Gemini, Grok, Kimi, Qwen, DeepSeek, ChatGPT, Z.AI, ERNIE (8 IAs)
+
+**Prompt:** `01_PROMPTS/analista_prompt.txt`
+
+**Acción:** Para CADA partido, copia el resumen del investigador y pégalo al final del prompt del analista. Envíaselo a cada IA.
+
+**Resultado:** 8 archivos TXT por partido (ej. `gemini_partido1.txt`, `grok_partido1.txt`, etc.).
+
+---
+
+## 📝 PASO 4: APP DE BACKTESTING
+
+**Herramienta:** Tu app en Python (carpeta 05_APP_BACKTESTING)
+
+**Acción:**
+1. Abre la app: `streamlit run app.py`
+2. Ve a "📥 Importar Picks".
+3. Sube TODOS los TXT generados.
+4. Ve a "✅ Registrar Resultados" y marca cada pick como Ganada/Perdida/Media.
+5. Ve a "📊 Dashboard" para ver métricas.
+
+---
+
+## 📝 PASO 5: APRENDIZAJE
+
+**Acción:**
+- Cada 20-30 partidos, revisa el ROI por IA y por mercado.
+- Ajusta los pesos de las IAs en tu criterio (o en el script de pesos dinámicos).
+- Refina prompts si detectas patrones de error.

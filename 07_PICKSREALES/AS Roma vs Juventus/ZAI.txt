@@ -1,0 +1,44 @@
+{
+  "ia": "Z.AI",
+  "fecha": "2026-03-01",
+  "partido": "AS Roma vs Juventus",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Disparidad de frescura física: Roma descansó una semana completa, mientras que Juventus jugó prórroga en Champions y viajó a Roma el mismo día del partido.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Bajas estructurales críticas en Juventus: ausencia del goleador Vlahović y el capitán/cardenche Locatelli, debilitando ataque y equilibrio defensivo.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Contexto anímico: Roma en puestos de Champions y en ascenso; Juventus en crisis (2 derrotas ligas + eliminación europea) con su técnico en la cuerda floja.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    }
+  },
+  "modelos_aplicados": ["analisis_situacional", "modelo_fatiga", "valor_esperado"],
+  "pick": {
+    "emitido": true,
+    "mercado": "Handicap",
+    "seleccion": "AS Roma (0.0)",
+    "cuota": 1.88,
+    "probabilidad_estimada": 0.68,
+    "probabilidad_implicita": 0.532,
+    "valor_esperado": 0.278,
+    "confianza": 0.75,
+    "stake_recomendado": "3 unidades",
+    "razonamiento": "Se detecta un desajuste significativo en las cuotas. Juventus llega muy mermado físicamente (prórroga vs Galatasaray) y deportivamente (bajas de Vlahović y Locatelli). Roma, fresca y en casa, solo necesita no perder para garantizar el retorno de la apuesta. El mercado subestima el impacto de la fatiga y las bajas visitantes."
+  },
+  "alternativas_consideradas": [
+    {"mercado": "1X2", "seleccion": "AS Roma", "descartado_por": "Cuota 2.75 ofrece menor margen de seguridad frente al empate que el Hándicap 0.0 @1.88."},
+    {"mercado": "Under 2.5", "seleccion": "Under", "descartado_por": "A pesar de las bajas de Juve, la cuota de 1.57 es demasiado baja para justificar valor esperado positivo alto."}
+  ],
+  "riesgos": [
+    "Paulo Dybala es duda y su ausencia podría restar creatividad a Roma.",
+    "Juventus tiene defensas de élite (Bremer) capaces de mantener un empate a pesar de las bajas.",
+    "El árbitro Simone Sozza tiene tendencia a señalar penaltis (0.39/partido), factor de varianza."
+  ]
+}

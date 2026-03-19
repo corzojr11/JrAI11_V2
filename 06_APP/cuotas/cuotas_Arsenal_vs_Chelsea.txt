@@ -1,0 +1,177 @@
+# CUOTAS REALES - Arsenal vs Chelsea
+Fecha partido: 2026-03-01 16:30 UTC
+Generado: 2026-03-01 09:53
+
+--- CODERE (IT) ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 5.6
+1X2 - Draw: 4.3
+Over/Under - Over (2.5): 1.64
+Over/Under - Under (2.5): 2.07
+
+--- 1XBET ---
+1X2 - Arsenal: 1.6
+1X2 - Chelsea: 6.08
+1X2 - Draw: 4.39
+Hándicap (spread) - Arsenal (-1.5): 2.5
+Hándicap (spread) - Chelsea (1.5): 1.52
+Over/Under - Over (2.5): 1.75
+Over/Under - Under (2.5): 2.25
+
+--- MYBOOKIE.AG ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 5.5
+1X2 - Draw: 4.3
+Hándicap (spread) - Arsenal (-0.5): 1.57
+Hándicap (spread) - Chelsea (0.5): 2.42
+Over/Under - Over (3.0): 2.15
+Over/Under - Under (3.0): 1.71
+
+--- PARIONS SPORT (FR) ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 6.0
+1X2 - Draw: 4.4
+
+--- PMU (FR) ---
+1X2 - Arsenal: 1.52
+1X2 - Chelsea: 5.8
+1X2 - Draw: 4.2
+
+--- WINAMAX (FR) ---
+1X2 - Arsenal: 1.54
+1X2 - Chelsea: 5.3
+1X2 - Draw: 4.3
+
+--- WINAMAX (DE) ---
+1X2 - Arsenal: 1.56
+1X2 - Chelsea: 5.4
+1X2 - Draw: 4.3
+
+--- BETCLIC (FR) ---
+1X2 - Arsenal: 1.6
+1X2 - Chelsea: 5.75
+1X2 - Draw: 4.3
+
+--- BETFAIR ---
+1X2 - Arsenal: 1.6
+1X2 - Chelsea: 6.4
+1X2 - Draw: 4.5
+h2h_lay - Arsenal: 1.61
+h2h_lay - Chelsea: 6.6
+h2h_lay - Draw: 4.6
+
+--- MARATHON BET ---
+1X2 - Arsenal: 1.58
+1X2 - Chelsea: 6.0
+1X2 - Draw: 4.33
+
+--- 888SPORT ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 5.5
+1X2 - Draw: 4.0
+
+--- WILLIAM HILL ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 5.5
+1X2 - Draw: 4.0
+Over/Under - Over (2.5): 1.7
+Over/Under - Under (2.5): 2.05
+
+--- PINNACLE ---
+1X2 - Arsenal: 1.57
+1X2 - Chelsea: 6.03
+1X2 - Draw: 4.33
+Hándicap (spread) - Arsenal (-1.0): 1.97
+Hándicap (spread) - Chelsea (1.0): 1.95
+Over/Under - Over (2.75): 1.91
+Over/Under - Under (2.75): 2.0
+
+--- LEOVEGAS (SE) ---
+1X2 - Arsenal: 1.54
+1X2 - Chelsea: 6.1
+1X2 - Draw: 4.35
+Over/Under - Over (2.5): 1.68
+Over/Under - Under (2.5): 2.23
+
+--- UNIBET (SE) ---
+1X2 - Arsenal: 1.56
+1X2 - Chelsea: 6.1
+1X2 - Draw: 4.4
+Over/Under - Over (2.5): 1.68
+Over/Under - Under (2.5): 2.2
+
+--- UNIBET (NL) ---
+1X2 - Arsenal: 1.56
+1X2 - Chelsea: 6.25
+1X2 - Draw: 4.4
+Over/Under - Over (2.5): 1.68
+Over/Under - Under (2.5): 2.2
+
+--- TIPICO ---
+1X2 - Arsenal: 1.5
+1X2 - Chelsea: 6.0
+1X2 - Draw: 4.4
+Over/Under - Over (2.5): 1.67
+Over/Under - Under (2.5): 2.15
+
+--- NORDIC BET ---
+1X2 - Arsenal: 1.58
+1X2 - Chelsea: 5.8
+1X2 - Draw: 4.25
+Over/Under - Over (2.5): 1.68
+Over/Under - Under (2.5): 2.18
+
+--- BETSSON ---
+1X2 - Arsenal: 1.58
+1X2 - Chelsea: 5.8
+1X2 - Draw: 4.25
+Over/Under - Over (2.5): 1.68
+Over/Under - Under (2.5): 2.18
+
+--- BETONLINE.AG ---
+1X2 - Arsenal: 1.56
+1X2 - Chelsea: 6.2
+1X2 - Draw: 4.37
+Hándicap (spread) - Arsenal (-1.0): 1.95
+Hándicap (spread) - Chelsea (1.0): 1.9
+Over/Under - Over (2.75): 1.96
+Over/Under - Under (2.75): 1.89
+
+--- UNIBET (FR) ---
+1X2 - Arsenal: 1.6
+1X2 - Chelsea: 5.75
+1X2 - Draw: 4.3
+
+--- EVERYGAME ---
+1X2 - Arsenal: 1.55
+1X2 - Chelsea: 6.0
+1X2 - Draw: 4.2
+
+--- GTBETS ---
+1X2 - Arsenal: 1.58
+1X2 - Chelsea: 5.46
+1X2 - Draw: 4.26
+Hándicap (spread) - Arsenal (-0.5): 1.56
+Hándicap (spread) - Chelsea (0.5): 2.38
+Over/Under - Over (2.5): 1.7
+Over/Under - Under (2.5): 2.12
+
+--- COOLBET ---
+1X2 - Arsenal: 1.59
+1X2 - Chelsea: 6.1
+1X2 - Draw: 4.4
+Over/Under - Over (2.5): 1.73
+Over/Under - Under (2.5): 2.2
+
+--- MATCHBOOK ---
+1X2 - Arsenal: 1.61
+1X2 - Chelsea: 6.4
+1X2 - Draw: 4.5
+h2h_lay - Arsenal: 1.62
+h2h_lay - Chelsea: 6.6
+h2h_lay - Draw: 4.6
+Hándicap (spread) - Arsenal (-1.0): 2.0
+Hándicap (spread) - Chelsea (1.0): 1.96
+Over/Under - Over (2.5): 1.75
+Over/Under - Under (2.5): 2.3
+

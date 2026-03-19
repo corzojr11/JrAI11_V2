@@ -1,0 +1,52 @@
+
+{
+  "ia": "Z.AI",
+  "fecha": "2026-03-01",
+  "partido": "Olympique Marseille vs Olympique Lyon",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Lyon afronta el partido sin su máximo goleador Pavel Šulc (duda seria por lesión muscular), además de las bajas confirmadas de Fofana y Nuamah. Esto reduce drásticamente su capacidad ofensiva y xG.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Marseille presenta bajas defensivas relevantes (Balerdi sancionado, Rulli suspendido), lo que teóricamente facilita goles al rival, pero se ve mitigado por la incapacidad ofensiva del visitante.",
+      "impacto": "medio",
+      "direccion": "favor_visit"
+    },
+    "factor_clave_3": {
+      "descripcion": "El mercado de goles (Over 2.5) cotiza a 1.85, sugiriendo un partido abierto. Sin embargo, las ausencias acumuladas en la delantera de Lyon apuntan a un encuentro más cerrado o con menos goles de los esperados por el mercado.",
+      "impacto": "alto",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson_ajustado_por_ausencias", "elo_rating"],
+  "pick": {
+    "emitido": true,
+    "mercado": "Over/Under",
+    "seleccion": "Under 2.5",
+    "cuota": 2.03,
+    "probabilidad_estimada": 0.57,
+    "probabilidad_implicita": 0.49,
+    "valor_esperado": 0.157,
+    "confianza": 0.72,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "El mercado sobrevalora el 'Over 2.5' (cuota 1.85) basándose en el histórico de los equipos y las bajas defensivas de Marseille, pero ignora el impacto crítico de las ausencias de Šulc, Fofana y Nuamah en Lyon. Un equipo de la parte alta de la tabla sin sus principales referentes goleadores tiene alta probabilidad de no marcar o marcar solo un gol. Valor encontrado en la línea de goles."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "1X2",
+      "seleccion": "Marseille",
+      "descartado_por": "Aunque las bajas de Lyon favorecen al local, la cuota de 2.00 no ofrece suficiente margen de seguridad dada la inconsistencia reciente de Marseille (derrota vs Brest). EV calculado (~5%) inferior al pick de goles."
+    },
+    {
+      "mercado": "Hándicap",
+      "seleccion": "Lyon +0.5",
+      "descartado_por": "Lyon llega con moral alta pese a la derrota, pero las bajas en ataque hacen arriesgado apostar a que eviten la derrota contra un local fuerte. Preferimos el mercado de goles."
+    }
+  ],
+  "riesgos": [
+    "El portero suplente de Marseille (por sanción de Rulli) puede cometer errores que faciliten un gol barato a Lyon.",
+    "El partido puede abrirse tras un gol tempranero, invalidando la lógica defensiva por lesiones."
+  ]
+}

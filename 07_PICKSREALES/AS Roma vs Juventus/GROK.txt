@@ -1,0 +1,56 @@
+{
+"ia": "GROK",
+"fecha": "2026-03-01",
+"partido": "AS Roma vs Juventus",
+"analisis": {
+"lesiones_juventus": {
+"descripcion": "Juventus sufre bajas clave como Locatelli (sancionado), Vlahovic (lesionado) y otros, debilitando su mediocampo y ataque.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fatiga_juventus": {
+"descripcion": "Juventus llega fatigado tras eliminación en Champions y derrotas recientes, con viaje el mismo día del partido.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"forma_roma": {
+"descripcion": "Roma en buena dinámica, con semana de descanso, fuerte defensa (0.6 GA últimos 10) y localía en Olimpico.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"psicologico": {
+"descripcion": "Duelo directo por Champions, pero Juventus bajo presión mental tras racha negativa.",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson", "forma_reciente"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "AS Roma",
+"cuota": 2.75,
+"probabilidad_estimada": 0.46,
+"probabilidad_implicita": 0.36,
+"valor_esperado": 0.265,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor positivo identificado: estimación 46% vs implícita 36%. Factores clave: bajas y fatiga de Juventus, fortaleza local de Roma con posesión alta y defensa sólida."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Under 2.5",
+"descartado_por": "Probabilidad estimada (0.596) menor que implícita (aprox. 0.60), sin valor claro."
+},
+{
+"mercado": "1X2",
+"seleccion": "Draw",
+"descartado_por": "Probabilidad estimada (0.276) menor que implícita (0.33), no value."
+}
+],
+"riesgos": [
+"Dybala en duda para Roma, podría afectar creatividad ofensiva si no juega al 100%.",
+"Juventus refuerza defensa con retornos de Bremer y Kalulu, podría estabilizar su zaga."
+]
+}

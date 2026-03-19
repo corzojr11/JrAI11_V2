@@ -1,0 +1,56 @@
+[
+  {
+    "Partido": "Atalanta vs Borussia Dortmund",
+    "Mercado": "Ganador del Partido",
+    "Seleccion": "Atalanta",
+    "Cuota Promedio": 2.11,
+    "Consenso": 4,
+    "Confianza Ponderada": 0.63,
+    "Recomendacion": "Moderada"
+  },
+  {
+    "Partido": "Atalanta vs Borussia Dortmund",
+    "Mercado": "Total de Goles",
+    "Seleccion": "M\u00e1s de 2.5",
+    "Cuota Promedio": 1.64,
+    "Consenso": 3,
+    "Confianza Ponderada": 0.73,
+    "Recomendacion": "Moderada"
+  },
+  {
+    "Partido": "Atalanta vs Borussia Dortmund",
+    "Mercado": "BTTS",
+    "Seleccion": "S\u00ed",
+    "Cuota Promedio": 1.67,
+    "Consenso": 3,
+    "Confianza Ponderada": 0.71,
+    "Recomendacion": "Moderada"
+  },
+  {
+    "Partido": "Real Madrid vs Barcelona",
+    "Mercado": "1X2",
+    "Seleccion": "Real Madrid",
+    "Cuota Promedio": 1.85,
+    "Consenso": 2,
+    "Confianza Ponderada": 0.8,
+    "Recomendacion": "Baja"
+  },
+  {
+    "Partido": "Real Madrid vs Barcelona",
+    "Mercado": "Over 2.5",
+    "Seleccion": "Over",
+    "Cuota Promedio": 1.7,
+    "Consenso": 1,
+    "Confianza Ponderada": 0.75,
+    "Recomendacion": "Baja"
+  },
+  {
+    "Partido": "Atalanta vs Borussia Dortmund",
+    "Mercado": "Over 2.5",
+    "Seleccion": "M\u00e1s de 2.5",
+    "Cuota Promedio": 1.67,
+    "Consenso": 1,
+    "Confianza Ponderada": 0.74,
+    "Recomendacion": "Baja"
+  }
+]

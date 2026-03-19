@@ -1,0 +1,64 @@
+
+{
+  "ia": "QWEN",
+  "fecha": "2026-03-01",
+  "partido": "Olympique Marseille vs Olympique Lyon",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Lyon llega con bajas críticas en ataque: Šulc (máximo goleador, duda por lesión muscular), Fofana y Nuamah (lesiones de larga duración). Esto reduce significativamente su potencial ofensivo.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Marseille tiene registro sólido en casa: 7 victorias en 11 partidos de Ligue 1 en el Vélodrome esta temporada, con 80% de sus partidos locales superando 2.5 goles.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Ambos equipos vienen de derrotas (Marseille 0-2 vs Brest, Lyon 1-3 vs Strasbourg), lo que rompe la racha de 13 victorias de Lyon. Partido de alta intensidad por la rivalidad 'Olympico'.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    },
+    "factor_clave_4": {
+      "descripcion": "Árbitro Jérôme Brisard promedia 3.7 tarjetas amarillas por partido en Ligue 1 2025-26, con tendencia a señalar penales (0.7 por encuentro). Clásico intenso puede generar más tarjetas.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "valor_esperado"],
+  "pick": {
+    "emitido": true,
+    "mercado": "Over/Under",
+    "seleccion": "Over 2.5",
+    "cuota": 1.85,
+    "probabilidad_estimada": 0.62,
+    "probabilidad_implicita": 0.541,
+    "valor_esperado": 0.145,
+    "confianza": 0.71,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado: mi estimación 62% vs probabilidad implícita del mercado 54.1%. Marseille tiene 80% de partidos locales con Over 2.5 esta temporada. Lyon, pese a bajas ofensivas, participó en 60% de sus últimos 5 partidos con Over 2.5. La naturaleza abierta del 'Olympico', la necesidad de ambos equipos de sumar por puestos europeos (Marseille 4º con 40 pts, Lyon 3º con 45 pts), y las vulnerabilidades defensivas mostradas en sus últimas derrotas apoyan un partido con goles. La cuota promedio de 1.85 en múltiples bookmakers (William Hill, Codere, 1xBet) ofrece valor positivo."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "1X2",
+      "seleccion": "Marseille",
+      "descartado_por": "Cuota ~2.00 ofrece valor marginal (estimación 52% vs implícita 50%), pero confianza no alcanza 0.65 debido a incertidumbre en lesiones de Marseille (reportes contradictorios sobre Balerdi, Kondogbia, Rulli)."
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Lyon",
+      "descartado_por": "Sin valor: cuota ~3.80 implica 26.3% probabilidad, estimación real ~22% debido a bajas ofensivas críticas (Šulc, Fofana, Nuamah)."
+    },
+    {
+      "mercado": "BTTS",
+      "seleccion": "Sí",
+      "descartado_por": "Valor potencial pero menos claro que Over 2.5. Lyon puede tener dificultades para marcar sin sus principales atacantes."
+    }
+  ],
+  "riesgos": [
+    "Lesiones de último minuto no confirmadas oficialmente (Marseille tiene reportes contradictorios sobre indisponibles).",
+    "Lyon podría adoptar enfoque más defensivo ante bajas ofensivas, reduciendo ritmo del partido.",
+    "Condiciones climáticas: aunque se espera tiempo seco, viento costero moderado en Marsella podría afectar precisión de pases.",
+    "Árbitro Brisard podría controlar el partido con tarjetas tempranas, interrumpiendo flujo ofensivo."
+  ]
+}

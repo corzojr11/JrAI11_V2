@@ -1,0 +1,16 @@
+{
+  "gemini": 0.586,
+  "Z.AI": 0.586,
+  "Auto-Ollama-Llama": 0.43,
+  "Auto-Groq-Contrarian": 0.429,
+  "Auto-Groq-FormaReciente": 0.429,
+  "Auto-Ollama-Phi4": 0.429,
+  "Auto-Ollama-Qwen": 0.429,
+  "Auto-SambaNova-PesoPesado": 0.429,
+  "grok": 0.396,
+  "Analista Cuantitativo Multi-Sistema": 0.387,
+  "Claude Sonnet 4.6": 0.345,
+  "chat gpt": 0.219,
+  "qwen": 0.212,
+  "KIMI": 0.209
+}

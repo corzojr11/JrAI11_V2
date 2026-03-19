@@ -1,0 +1,64 @@
+{
+  "ia": "QWEN",
+  "fecha": "2026-03-01",
+  "partido": "Arsenal vs Chelsea",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Chelsea con defensa diezmada: Cucurella lesionado, Fofana suspendido, Colwill fuera por ACL. Arsenal explota lado izquierdo débil.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Historial dominante: Arsenal invicto vs Chelsea desde 2021 (7V-3E en últimos 10). Chelsea no gana en Emirates en Premier desde 2021.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Momento psicológico: Arsenal viene de 4-1 vs Spurs, líder en carrera por título. Chelsea infrarinde su xG (52.3 máximo de liga) pero con corrección pendiente.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_clave_4": {
+      "descripcion": "Localía Emirates: Arsenal sólido en casa, estadio lleno esperado. Chelsea con viajes intra-ciudad pero sin ventaja histórica en este recinto.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "xg_adjusted"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Arsenal",
+    "cuota": 1.57,
+    "probabilidad_estimada": 0.67,
+    "probabilidad_implicita": 0.637,
+    "valor_esperado": 0.052,
+    "confianza": 0.72,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado: mi estimación 67% vs mercado 63.7%. Factores clave: defensa Chelsea diezmada (3 bajas defensivas clave), historial dominante de Arsenal vs Chelsea desde 2021, ventaja de localía en Emirates, y momento psicológico favorable tras 4-1 vs Spurs. La cuota de 1.57 (Pinnacle/Codere) ofrece edge positivo de ~3.3 puntos porcentuales."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over/Under",
+      "seleccion": "Over 2.5",
+      "descartado_por": "Valor marginal: estimado 59% vs implícita 58.8% en cuota 1.70. Edge insuficiente para confianza >=0.65."
+    },
+    {
+      "mercado": "Hándicap",
+      "seleccion": "Arsenal -1.0",
+      "descartado_por": "Riesgo alto: Chelsea invicto 6 partidos, puede mantener marcador cerrado. Cuota 1.95 no compensa volatilidad."
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Empate",
+      "descartado_por": "Sin valor: estimado 20% vs implícita 23% en cuota 4.3. Mercado sobrevalora empate."
+    }
+  ],
+  "riesgos": [
+    "Chelsea genera mayor xG de la liga (52.3) y podría corregir infrarendimiento goleador",
+    "44% de goles encajados por Arsenal en 2026 provienen de errores individuales",
+    "Saka con duda menor por tobillo; si no está al 100% reduce potencia ofensiva derecha",
+    "Árbitro Darren England con historial moderado; podría no favorecer flujo de juego abierto",
+    "Condiciones climáticas con lluvia ligera podrían ralentizar ritmo y reducir goles"
+  ]
+}

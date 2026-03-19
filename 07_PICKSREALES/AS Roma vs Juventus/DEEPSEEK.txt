@@ -1,0 +1,47 @@
+{
+"ia": "DEEPSEEK",
+"fecha": "2026-03-01",
+"partido": "AS Roma vs Juventus",
+"analisis": {
+"lesiones_clave_juventus": {
+"descripcion": "Juventus afronta el partido sin su capitán y mediocentro titular Manuel Locatelli (suspendido) y sin su máximo goleador Dusan Vlahović (lesionado), dos bajas fundamentales en el equilibrio del equipo.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fatiga_y_moral": {
+"descripcion": "La Juventus llega tras una eliminatoria europea perdida en la prórroga y dos derrotas consecutivas en liga, con una semana cargada física y mentalmente; la Roma ha tenido siete días de descanso y juega en casa con máxima motivación por la lucha Champions.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"dominio_local_roma": {
+"descripcion": "La Roma presenta números muy sólidos en casa: 56,6% de posesión, solo 0,6 goles encajados de media y 8,2 córners a favor por partido, lo que refleja control y capacidad para imponer su estilo.",
+"impacto": "alto",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "AS Roma",
+"cuota": 2.78,
+"probabilidad_estimada": 0.43,
+"probabilidad_implicita": 0.3597,
+"valor_esperado": 0.195,
+"confianza": 0.75,
+"stake_recomendado": "2 unidades",
+"razonamiento": "La combinación de las graves ausencias de Locatelli y Vlahović en la Juventus, su desgaste físico y anímico por la reciente eliminación europea y las derrotas ligueras, junto con la solidez local de la Roma (descansada, motivada y con números defensivos excelentes) genera una probabilidad de victoria local superior a la que refleja la cuota 2.78. Mi estimación del 43% supera el 35,9% implícito en el mercado, ofreciendo un valor esperado positivo del 19,5%."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Under 2.5",
+"seleccion": "Under 2.5 goles",
+"descartado_por": "A pesar de las ausencias ofensivas de la Juventus, la solidez defensiva de ambos equipos y el perfil de partido cerrado invitan a pensar en pocos goles, pero las cuotas (1,60-1,67) implican una probabilidad superior al 60%, y mi estimación no supera ese umbral con suficiente confianza."
+}
+],
+"riesgos": [
+"Posible regreso de Dybala no garantizado al 100%; si finalmente no juega, la capacidad creativa de Roma se reduce.",
+"La Juventus, pese a las bajas, cuenta con individualidades (Bremer, Openda) que pueden decidir un partido igualado.",
+"El árbitro Simone Sozza tiene un promedio de tarjetas relativamente alto, lo que podría generar alguna expulsión que altere el desarrollo."
+]
+}

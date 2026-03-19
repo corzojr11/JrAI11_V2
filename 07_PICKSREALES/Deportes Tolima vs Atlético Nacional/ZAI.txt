@@ -1,0 +1,78 @@
+{
+  "ia": "Z.AI",
+  "fecha": "2026-03-01",
+  "partido": "Deportes Tolima vs Atlético Nacional",
+  "analisis": {
+    "factor_forma": {
+      "descripcion": "Nacional llega con 5V-0E-1P y +11 DG vs Tolima con 3V-3E-2P y +3 DG. Morelos en racha con 6 goles en 5 partidos.",
+      "impacto": "alto",
+      "direccion": "favor_visitante"
+    },
+    "factor_fatiga": {
+      "descripcion": "Tolima jugó Copa Libertadores con prórroga y penales vs Táchira, luego viajó a Cúcuta donde perdió 3-2. Desgaste físico y mental significativo.",
+      "impacto": "alto",
+      "direccion": "favor_visitante"
+    },
+    "factor_localia": {
+      "descripcion": "Tolima juega en el Murillo Toro, estadio difícil. Se permitirá hinchada visitante (residentes en Ibagué), ambiente de clásico moderno.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_bajas": {
+      "descripcion": "Nacional sin Ospina, Román, Campuzano y Rodríguez por decisión técnica. Tesillo recuperado. Tolima sin confirmación de bajas para fecha 9.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    },
+    "factor_calendario": {
+      "descripcion": "Nacional con 3 partidos en 7 días (Tolima, Millonarios por Copa Sudamericana, Águilas). Posible rotación pero profundidad de plantilla suficiente.",
+      "impacto": "medio",
+      "direccion": "favor_local"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "regresion_logistica"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Atlético Nacional",
+    "cuota": 2.43,
+    "probabilidad_estimada": 0.46,
+    "probabilidad_implicita": 0.4115,
+    "valor_esperado": 0.1178,
+    "confianza": 0.72,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Valor identificado: mi estimación 46% supera probabilidad implícita de 41.15% (VE +11.78%). Factores clave: (1) Forma superior de Nacional con 5 victorias en 6 partidos; (2) Fatiga crítica de Tolima tras Copa Libertadores con prórroga más viaje a Cúcuta; (3) Morelos en racha goleadora (6 goles en 5 partidos). El factor localía y posibles rotaciones de Nacional mitigan parcialmente el valor, pero el diferencial de forma y desgaste justifica el pick con confianza de 0.72."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over/Under 2.5",
+      "seleccion": "Under 2.5",
+      "cuota": 1.73,
+      "probabilidad_estimada": 0.58,
+      "probabilidad_implicita": 0.578,
+      "descartado_por": "Valor esperado marginal (VE +0.4%). El historial de partidos entre ambos muestra encuentros ajustados (0-0, 4-3, 2-0, 1-1, 1-0), pero el VE insuficiente no alcanza umbral de confianza."
+    },
+    {
+      "mercado": "BTTS",
+      "seleccion": "Sí",
+      "cuota": 1.85,
+      "probabilidad_estimada": 0.56,
+      "probabilidad_implicita": 0.541,
+      "descartado_por": "Valor esperado bajo (VE +3.6%). Aunque Nacional concede goles como visitante (1.3 GC), la confianza no supera 0.65."
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Empate",
+      "cuota": 3.60,
+      "probabilidad_estimada": 0.28,
+      "probabilidad_implicita": 0.278,
+      "descartado_por": "Sin valor esperado positivo. El empate no ofrece diferencial entre estimación y mercado."
+    }
+  ],
+  "riesgos": [
+    "Localía de Tolima en el Murillo Toro, estadio tradicionalmente difícil para visitantes",
+    "Posibles rotaciones de Nacional por calendario apretado (3 partidos en 7 días)",
+    "Ausencia de David Ospina reduce experiencia bajo palos del visitante",
+    "Ambiente de clásico moderno puede nivelar diferencias de forma",
+    "Posible lluvia en Ibagué según pronóstico (49-55% probabilidad) podría afectar ritmo de juego"
+  ]
+}

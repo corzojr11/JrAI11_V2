@@ -1,0 +1,20 @@
+[
+  {
+    "fecha_registro": "2026-03-13 22:54:00",
+    "fecha_partido": "2026-03-13",
+    "partido": "ATLETICO NACIONAL VS LLANEROS",
+    "manual_mercado": "over/under",
+    "manual_seleccion": "under 2,5",
+    "manual_cuota": 2.07,
+    "manual_nota": "PICK PRINCIPAL DE Z.IA Y CLAUDE",
+    "auto_mercado": "1X2",
+    "auto_seleccion": "1",
+    "auto_cuota": 1.32,
+    "auto_consenso": "5/6",
+    "auto_nota": "TODAS AL LOCAL MENOS LLAMA QUE SE FUE AL OVER 2,5",
+    "resultado_real": "2-0",
+    "ganador_caso": "Empate",
+    "estado_caso": "Cerrado",
+    "notas": "EN ESTUIDO, SE ACERTO LOS PICKS PIRNCIPALES DE LOS DOS"
+  }
+]

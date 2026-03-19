@@ -1,0 +1,69 @@
+
+{
+  "ia": "KIMI",
+  "fecha": "2026-03-01",
+  "partido": "Olympique Marseille vs Olympique Lyon",
+  "analisis": {
+    "factor_clave_1": {
+      "descripcion": "Bajas masivas en ataque de Lyon: Šulc (máximo goleador), Fofana y Nuamah lesionados. Lyon pierde su principal referencia ofensiva y desequilibrio en bandas.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_2": {
+      "descripcion": "Fortaleza local del Vélodrome: Marseille invicto en 7 de 11 partidos en casa, con ambiente intimidante y acústica que presiona al rival.",
+      "impacto": "alto",
+      "direccion": "favor_local"
+    },
+    "factor_clave_3": {
+      "descripcion": "Contradicción en reportes de lesiones de Marseille: mientras algunas fuentes listan a Kondogbia, Rulli, Weah y Balerdi como bajas, FotMob indica 'no unavailable players'. Esto genera incertidumbre sobre el XI real.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    },
+    "factor_clave_4": {
+      "descripcion": "Lyon venía de racha de 13 victorias consecutivas antes de caer vs Strasbourg, mostrando solidez estructural, aunque la derrota y lesiones pueden afectar psicológicamente.",
+      "impacto": "medio",
+      "direccion": "favor_visit"
+    },
+    "factor_clave_5": {
+      "descripcion": "Estadísticas de goles: 80% de partidos de Marseille en casa superan 2.5 goles; Lyon tiene 60% de over 2.5 fuera. Ambos equipos generan volumen ofensivo.",
+      "impacto": "medio",
+      "direccion": "neutral"
+    }
+  },
+  "modelos_aplicados": ["poisson", "elo", "ajuste_bajas"],
+  "pick": {
+    "emitido": true,
+    "mercado": "1X2",
+    "seleccion": "Olympique Marseille",
+    "cuota": 2.0,
+    "probabilidad_estimada": 0.58,
+    "probabilidad_implicita": 0.50,
+    "valor_esperado": 0.16,
+    "confianza": 0.68,
+    "stake_recomendado": "2 unidades",
+    "razonamiento": "Lyon pierde a su máximo goleador (Šulc) y dos extremos clave (Fofana, Nuamah) justo antes del clásico. Aunque Marseille tiene reportes contradictorios de lesiones, la fortaleza del Vélodrome (7 victorias en 11 locales) y la crisis ofensiva del rival justifican el pick. Probabilidad estimada 58% vs implícita 50% = valor del 8%. Confianza 0.68 por la incertidumbre en bajas de OM."
+  },
+  "alternativas_consideradas": [
+    {
+      "mercado": "Over/Under",
+      "seleccion": "Over 2.5",
+      "descartado_por": "Cuota 1.82-1.93 no ofrece valor suficiente. Aunque estadísticamente probable, las bajas ofensivas de Lyon reducen la certeza de goles."
+    },
+    {
+      "mercado": "1X2",
+      "seleccion": "Lyon",
+      "descartado_por": "Cuota 3.7-4.0 implica probabilidad implícita 25-27%, pero con 3 bajas ofensivas clave mi estimación es 22%. Sin valor."
+    },
+    {
+      "mercado": "Hándicap",
+      "seleccion": "Marseille -0.5",
+      "descartado_por": "Cuota similar al 1X2 pero con mayor riesgo de push en empate. Preferible mercado directo."
+    }
+  ],
+  "riesgos": [
+    "Incertidumbre sobre lesiones de Marseille: si Rulli, Kondogbia y Balerdi realmente están fuera, el equipo local se debilita significativamente",
+    "Lyon podría reaccionar a la adversidad con planteamiento ultra-defensivo y contragolpe, complicando el partido",
+    "Factor clásico: alta intensidad y presión pueden generar expulsiones o penales que alteren el resultado esperado",
+    "Árbitro Brisard con tendencia a tarjetas (3.7 amarillas/partido) puede condicionar el desarrollo táctico"
+  ]
+}

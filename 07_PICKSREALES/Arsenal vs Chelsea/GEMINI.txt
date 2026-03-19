@@ -1,0 +1,55 @@
+{
+"ia": "GEMINI",
+"fecha": "2026-03-01",
+"partido": "Arsenal vs Chelsea",
+"analisis": {
+"bajas_defensivas_chelsea": {
+"descripcion": "Chelsea sufre bajas estructurales graves en defensa: Fofana (suspendido), Cucurella y Colwill (lesionados). Obliga a usar laterales reconvertidos y una zaga central improvisada.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"localia_y_contexto": {
+"descripcion": "Arsenal juega en el Emirates, pelea activamente por el título de la Premier League y llega con la moral alta tras golear al Tottenham. Chelsea no gana en liga en este estadio desde 2021 y suele sufrir derrotas abultadas.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fuego_ofensivo_local": {
+"descripcion": "Arsenal promedia 14.7 tiros por partido y Viktor Gyökeres llega en racha (doblete). Explotarán el canal izquierdo ante el lateral improvisado de Chelsea.",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": [
+"poisson",
+"elo",
+"xg_performance"
+],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Arsenal",
+"cuota": 1.61,
+"probabilidad_estimada": 0.72,
+"probabilidad_implicita": 0.621,
+"valor_esperado": 0.099,
+"confianza": 0.80,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor claro identificado: mi estimación (72%) supera ampliamente la probabilidad implícita del mercado en Matchbook (62.1%). Arsenal es dominante en el Emirates, tiene el incentivo del título y enfrenta a una línea defensiva del Chelsea diezmada por lesiones y suspensiones clave."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Over 2.5 @ 1.75 (1XBET/Matchbook)",
+"descartado_por": "Tiene valor secundario, pero depende de la capacidad de finalización del Chelsea, que ha infraperformado su altísimo xG recientemente. La victoria directa del local es más sólida."
+},
+{
+"mercado": "Handicap",
+"seleccion": "Arsenal -1.0 @ 2.00 (Matchbook)",
+"descartado_por": "Buena cuota, pero existe riesgo de 'push' si Arsenal decide dormir el partido tras obtener una ventaja mínima para ahorrar energía."
+}
+],
+"riesgos": [
+"Bukayo Saka y Ben White llegan con molestias (dudas menores), lo que podría restar profundidad a la banda derecha del Arsenal.",
+"El poder ofensivo individual de Cole Palmer y el buen momento de Joao Pedro pueden generar goles para Chelsea incluso con pocos tiros a puerta."
+]
+}

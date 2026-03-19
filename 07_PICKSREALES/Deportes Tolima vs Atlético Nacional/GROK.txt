@@ -1,0 +1,45 @@
+{
+"ia": "Grok",
+"fecha": "2026-03-01",
+"partido": "Deportes Tolima vs Atlético Nacional",
+"analisis": {
+"forma_reciente": {
+"descripcion": "Atlético Nacional muestra mejor forma con 15 puntos en 6 partidos y +11 en diferencia de goles, comparado con 12 puntos en 8 partidos de Tolima.",
+"impacto": "alto",
+"direccion": "favor_visit"
+},
+"lesiones_ausencias": {
+"descripcion": "Nacional tiene bajas clave como Ospina, Román y Campuzano por decisión técnica, pero recupera a Tesillo; Tolima posiblemente sin sancionados iniciales pero sin confirmación de lesiones recientes.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"fatiga_calendario": {
+"descripcion": "Tolima viene de partido con prórroga en Libertadores y derrota reciente, lo que implica fatiga; Nacional tiene calendario apretado pero llega con racha positiva.",
+"impacto": "medio",
+"direccion": "favor_visit"
+},
+"localia_hinchada": {
+"descripcion": "Tolima juega en casa con permiso para hinchas visitantes limitados, en un estadio con rivalidad intensa.",
+"impacto": "alto",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Atlético Nacional",
+"cuota": 2.43,
+"probabilidad_estimada": 0.46,
+"probabilidad_implicita": 0.41,
+"valor_esperado": 0.12,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Modelo Poisson estima 46% de probabilidad de victoria visitante vs 41% implícita en la cuota; valor positivo por superior forma de Nacional pese a bajas."
+},
+"alternativas_consideradas": [
+{"mercado": "Over/Under", "seleccion": "Under 2.5", "descartado_por": "Probabilidad estimada menor que implícita"},
+{"mercado": "BTTS", "seleccion": "Sí", "descartado_por": "Valor marginal y menor confianza"}
+],
+"riesgos": ["Impacto de bajas clave en Nacional podría reducir rendimiento", "Posible lluvia afectando el juego, beneficiando al local", "Rivalidad intensa podría llevar a resultado impredecible"]
+}

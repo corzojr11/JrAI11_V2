@@ -1,0 +1,55 @@
+{
+"ia": "GEMINI",
+"fecha": "2026-03-01",
+"partido": "Olympique Marseille vs Olympique Lyon",
+"analisis": {
+"bajas_ofensivas_visitante": {
+"descripcion": "Lyon pierde a su máximo goleador (Šulc) y extremos desequilibrantes (Fofana, Nuamah), limitando críticamente su capacidad de contraataque.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fortaleza_local": {
+"descripcion": "El Marsella ostenta un sólido registro en el Vélodrome (7 victorias en 11 partidos) y el ambiente del clásico añade presión al visitante.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"incertidumbre_defensiva_local": {
+"descripcion": "Reportes contradictorios sobre las posibles suspensiones de Balerdi y Rulli podrían afectar la solidez defensiva del Marsella.",
+"impacto": "medio",
+"direccion": "favor_visit"
+}
+},
+"modelos_aplicados": [
+"poisson",
+"elo",
+"ajuste_por_lesiones"
+],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Olympique Marseille",
+"cuota": 2.05,
+"probabilidad_estimada": 0.54,
+"probabilidad_implicita": 0.4878,
+"valor_esperado": 0.107,
+"confianza": 0.72,
+"stake_recomendado": "1.5 unidades",
+"razonamiento": "Valor claro identificado. El mercado no ha ajustado completamente el peso de la ausencia de Šulc y los extremos titulares del Lyon, desarmando su potencial ofensivo tras perder su racha ganadora. Con la localía a favor, mi modelo estima un 54% de probabilidad de victoria para Marsella, superando el 48.78% implícito en la cuota tope de 2.05 (Unibet/LeoVegas)."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Under 2.5 @ 2.04",
+"descartado_por": "Aunque el ataque del Lyon está mermado, el Marsella ha concedido goles recientemente y el carácter de 'clásico' a menudo resulta en partidos abiertos."
+},
+{
+"mercado": "Hándicap",
+"seleccion": "Lyon +0.5 @ 1.95",
+"descartado_por": "Carece de valor esperado positivo debido a las bajas estructurales que le restan profundidad y finalización al visitante."
+}
+],
+"riesgos": [
+"Confirmación de última hora sobre las bajas de Rulli (portero) y Balerdi (central) en Marsella, lo que igualaría las carencias defensivas.",
+"El árbitro Jérôme Brisard, en un clásico de alta rivalidad (Olympico), puede condicionar el partido con expulsiones tempranas que rompan los modelos pre-partido."
+]
+}

@@ -1,0 +1,52 @@
+{
+"ia": "DEEPSEEK",
+"fecha": "2026-03-01",
+"partido": "Arsenal vs Chelsea",
+"analisis": {
+"factor_clave_1": {
+"descripcion": "Múltiples bajas defensivas en Chelsea: Cucurella (lesionado), Fofana (suspendido), Colwill (lesión larga). La zaga visitante será una pareja improvisada Tosin-Chalobah con Gusto como lateral izquierdo, lo que debilita su solvencia ante el ataque local.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_2": {
+"descripcion": "Arsenal llega en buena dinámica tras golear 4-1 al Tottenham, con Gyökeres en racha y Saka previsiblemente disponible. El Emirates será un factor de presión y confianza.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"factor_clave_3": {
+"descripcion": "Historial reciente abrumadoramente favorable al Arsenal: no pierde con Chelsea desde 2021 (7 victorias, 3 empates en últimos 10 enfrentamientos).",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": ["poisson", "elo", "análisis contextual"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Arsenal",
+"cuota": 1.61,
+"probabilidad_estimada": 0.65,
+"probabilidad_implicita": 0.621,
+"valor_esperado": 0.047,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor identificado en victoria local por las múltiples bajas defensivas del Chelsea (Cucurella, Fofana, Colwill) y la solidez local del Arsenal, que llega con moral alta tras golear al Tottenham. Mi modelo estima un 65% de probabilidad de victoria del Arsenal, superior al 62.1% implícito en la cuota 1.61."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over 2.5",
+"seleccion": "Sí",
+"descartado_por": "La probabilidad estimada de over (alrededor de 58%) no supera claramente la implícita de las mejores cuotas (1.64 → 61%), sin valor evidente."
+},
+{
+"mercado": "Chelsea gana",
+"seleccion": "Chelsea",
+"descartado_por": "Las bajas defensivas y el pobre historial reciente reducen su probabilidad real muy por debajo del 16-17% que reflejan las cuotas (~6.0)."
+}
+],
+"riesgos": [
+"Chelsea tiene el mayor xG de la liga (52.3) y podría corregir su infrabajo goleador, especialmente con Joao Pedro en racha.",
+"Arsenal ha mostrado fragilidad en errores individuales (44% de goles encajados en 2026 por ese concepto).",
+"La posible inclusión de Reece James y otros titulares podría reforzar a Chelsea más de lo previsto."
+]
+}

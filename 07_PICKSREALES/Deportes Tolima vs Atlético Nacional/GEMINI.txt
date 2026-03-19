@@ -1,0 +1,55 @@
+{
+"ia": "GEMINI",
+"fecha": "2026-03-01",
+"partido": "Deportes Tolima vs Atlético Nacional",
+"analisis": {
+"fatiga_local": {
+"descripcion": "Tolima viene de un desgaste físico extremo tras jugar 120 minutos y penales en Copa Libertadores hace apenas 3 días.",
+"impacto": "alto",
+"direccion": "favor_visit"
+},
+"estado_de_forma": {
+"descripcion": "Atlético Nacional lidera con 5 victorias en 6 partidos, marcando 15 goles y recibiendo solo 4. Excelente momento ofensivo.",
+"impacto": "alto",
+"direccion": "favor_visit"
+},
+"rotacion_visitante": {
+"descripcion": "Nacional presenta bajas por decisión técnica (Ospina, Román, Campuzano), lo que sugiere rotación, aunque cuentan con plantilla profunda.",
+"impacto": "medio",
+"direccion": "neutral"
+},
+"solidez_defensiva_local": {
+"descripcion": "Tolima tiene partidos de margen ajustado (10 GF - 7 GC en 8 juegos), lo que puede complicar el ritmo del partido.",
+"impacto": "medio",
+"direccion": "favor_local"
+}
+},
+"modelos_aplicados": [
+"poisson",
+"elo",
+"analisis_fatiga_fisica"
+],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Atlético Nacional",
+"cuota": 2.43,
+"probabilidad_estimada": 0.48,
+"probabilidad_implicita": 0.411,
+"valor_esperado": 0.069,
+"confianza": 0.70,
+"stake_recomendado": "1.5 unidades",
+"razonamiento": "Valor claro identificado en la victoria visitante. El mercado valora a Nacional con un 41.1% de probabilidad (cuota 2.43 en Betplay), pero mi modelo estima un 48%. El factor diferencial es el agotamiento extremo del Tolima tras jugar prórroga hace 72 horas, frente a un Nacional en racha (5 victorias en 6 partidos) que llega con mayor frescura física a pesar de sus rotaciones técnicas."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Under 2.5",
+"descartado_por": "La cuota máxima de 1.73 (Betplay) refleja una probabilidad implícita alta (57.8%), dejando un margen de valor esperado muy estrecho frente a nuestra estimación (60%)."
+}
+],
+"riesgos": [
+"Falta de acople en Nacional debido a la rotación de jugadores clave como Ospina y Campuzano en el eje central.",
+"La necesidad del Tolima de reivindicarse como local en un 'clásico moderno' frente a su afición."
+]
+}

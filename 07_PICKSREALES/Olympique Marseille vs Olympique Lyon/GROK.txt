@@ -1,0 +1,52 @@
+{
+"ia": "Grok",
+"fecha": "2026-03-01",
+"partido": "Olympique Marseille vs Olympique Lyon",
+"analisis": {
+"lesiones_lyon": {
+"descripcion": "Lyon sufre múltiples bajas en el ataque, incluyendo a su máximo goleador Pavel Šulc y otros como Malick Fofana y Ernest Nuamah, lo que reduce significativamente su capacidad ofensiva.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"localia_marseille": {
+"descripcion": "Marseille tiene un sólido registro en casa en el Stade Vélodrome, con 7 victorias en 11 partidos de Ligue 1 esta temporada, y una afición intensa que genera presión sobre el visitante.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"forma_reciente": {
+"descripcion": "Lyon llega tras romper una racha de 13 victorias con una derrota 3-1 ante Strasbourg, mientras que Marseille, aunque irregular recientemente, necesita la victoria para acercarse a puestos europeos.",
+"impacto": "medio",
+"direccion": "favor_local"
+},
+"estilo_tactico": {
+"descripcion": "Ambos equipos juegan de manera abierta, con tendencia a partidos con goles, pero las ausencias en Lyon limitan sus transiciones rápidas.",
+"impacto": "medio",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Olympique Marseille",
+"cuota": 1.96,
+"probabilidad_estimada": 0.57,
+"probabilidad_implicita": 0.51,
+"valor_esperado": 0.12,
+"confianza": 0.75,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor identificado: estimación del 57% vs mercado 51%. Modelos Poisson y Elo indican ventaja para el local, agravada por las lesiones clave en el ataque de Lyon y la fortaleza de Marseille en casa."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over/Under",
+"seleccion": "Over 2.5",
+"descartado_por": "Valor esperado marginal (alrededor de 0.02) y menor confianza debido a posibles enfoques defensivos por las ausencias."
+}
+],
+"riesgos": [
+"Lesiones no completamente confirmadas en Marseille podrían afectar el rendimiento.",
+"La rivalidad del 'Olympico' podría llevar a un partido más cauteloso o a un empate inesperado.",
+"Forma reciente irregular de Marseille podría traducirse en errores defensivos."
+]
+}

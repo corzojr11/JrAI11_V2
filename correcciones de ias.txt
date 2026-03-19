@@ -1,0 +1,87 @@
+📋 LISTA MAESTRA DE MEJORAS (JR AI 11)
+🔴 PRIORIDAD ALTA (Implementar YA)
+1. Corregir vulnerabilidad de inyección SQL
+(Archivo: database.py – funciones update_resultado y save_picks)
+→ Cambiar consultas concatenadas por parámetros seguros.
+
+2. Unificar validación de API key
+(Archivos: config.py y app.py)
+→ Usar variables de entorno y verificar que la key existe antes de llamar a la API.
+
+3. Implementar caché con TTL para The Odds API
+(Archivo: obtener_cuotas_api.py)
+→ Crear caché local (SQLite) para no consumir créditos innecesariamente.
+
+4. Forzar JSON estructurado en prompts de analistas
+(Archivo: 01_PROMPTS/analista_prompt.txt)
+→ Modificar el prompt para exigir respuesta en JSON con campos fijos.
+
+5. Mejorar fórmula de ponderación de IAs
+(Archivo: analizar_rendimiento.py y juez_con_pesos.py)
+→ Reemplazar peso = 1 + ROI/100 por shrinkage bayesiano + Sharpe ratio.
+
+6. Añadir métricas de riesgo al dashboard
+(Archivo: app.py y backtest_engine.py)
+→ Calcular y mostrar Sharpe Ratio, Máximo Drawdown y Profit Factor.
+
+🟡 PRIORIDAD MEDIA (Siguientes 2-4 semanas)
+7. Separar lógica de UI y negocio
+(Archivo: app.py)
+→ Extraer funciones de cálculo a módulos separados (core/, services/).
+
+8. Paralelizar llamadas a las 8 IAs
+(Archivo: scripts/llamar_analistas.py)
+→ Usar asyncio y aiohttp para reducir tiempo de espera.
+
+9. Implementar fallback de APIs (API-Football)
+(Archivo: obtener_cuotas_api.py)
+→ Si The Odds API falla, intentar con API-Football (plan gratis).
+
+10. Automatizar el juez diario
+(Nuevo archivo: scripts/auto_judge.py)
+→ Programar ejecución diaria con schedule o GitHub Actions.
+
+11. Añadir validación temporal (walk-forward)
+(Nuevo archivo: validation/time_series_cv.py)
+→ Para evitar sobreajuste en backtesting.
+
+12. Corregir parseo de archivos de picks
+(Archivo: import_utils.py)
+→ Manejar correctamente la lectura doble y codificaciones.
+
+13. Eliminar hardcoding de detección de ligas
+*(Archivo: app.py líneas 143-153)*
+→ Usar un archivo JSON de mapeo equipo → liga.
+
+14. Añadir índices a la base de datos
+(Archivo: database.py)
+→ Crear índices en columnas fecha, ia, resultado para acelerar consultas.
+
+15. Corregir modelado de handicap asiático (medias)
+(Archivo: database.py y backtest_engine.py)
+→ Diferenciar entre half-win, half-loss y push.
+
+🟢 PRIORIDAD BAJA (Roadmap futuro)
+16. Migrar a PostgreSQL para multiusuario
+(Usar Supabase gratis como paso intermedio)
+
+17. Implementar modelo XGBoost para predicción de éxito
+(Nuevo módulo ml/predictor.py)
+
+18. Adaptar sistema a otros deportes (baloncesto, tenis)
+(Nuevos adaptadores en core/sports/)
+
+19. Añadir notificaciones por email/Telegram
+(Usar servicios gratuitos como Telegram Bot)
+
+20. Crear dashboard con gráficos interactivos (Plotly)
+(Mejora de visualizaciones en app.py)
+
+21. Implementar sistema de auto-aprendizaje con Bayesian updating
+(Nuevo módulo learning/weight_updater.py)
+
+22. Añadir test de significancia (Monte Carlo)
+(Nuevo archivo validation/monte_carlo.py)
+
+23. Incluir aspectos legales (disclaimers)
+(Añadir texto en app.py y documentación)

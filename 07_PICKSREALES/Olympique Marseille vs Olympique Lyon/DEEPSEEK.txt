@@ -1,0 +1,52 @@
+{
+"ia": "DEEPSEEK",
+"fecha": "2026-03-01",
+"partido": "Olympique Marseille vs Olympique Lyon",
+"analisis": {
+"lesiones_lyon": {
+"descripcion": "Múltiples bajas ofensivas confirmadas, incluyendo al máximo goleador Pavel Šulc, además de Fofana, Nuamah, Moreira y Mangala.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"fortaleza_local_om": {
+"descripcion": "Marseille posee un sólido registro en el Stade Vélodrome esta temporada: 7 victorias en 11 partidos de Ligue 1.",
+"impacto": "alto",
+"direccion": "favor_local"
+},
+"incertidumbre_lesiones_om": {
+"descripcion": "Reportes contradictorios sobre bajas en Marseille; una fuente indica plantilla completa, lo que sugiere que las posibles ausencias (Balerdi, Kondogbia, etc.) podrían no ser tales.",
+"impacto": "medio",
+"direccion": "neutral"
+}
+},
+"modelos_aplicados": ["poisson", "elo"],
+"pick": {
+"emitido": true,
+"mercado": "1X2",
+"seleccion": "Olympique Marseille",
+"cuota": 2.05,
+"probabilidad_estimada": 0.55,
+"probabilidad_implicita": 0.488,
+"valor_esperado": 0.128,
+"confianza": 0.70,
+"stake_recomendado": "2 unidades",
+"razonamiento": "Valor identificado: mi estimación (55%) supera la probabilidad implícita del mercado (48.8%) para la victoria de Marseille. Las numerosas bajas ofensivas de Lyon, especialmente la de su máximo goleador Šulc, merman su capacidad de gol, mientras que Marseille cuenta con un fuerte factor local y, pese a las dudas sobre lesiones, se espera que presente un once competitivo."
+},
+"alternativas_consideradas": [
+{
+"mercado": "Over 2.5",
+"seleccion": "Sí",
+"descartado_por": "Las bajas de Lyon reducen su potencial anotador, haciendo menos probable superar la línea de 2.5 goles a pesar del historial reciente de ambos equipos."
+},
+{
+"mercado": "Hándicap Marseille -0.5",
+"seleccion": "Marseille -0.5",
+"descartado_por": "La cuota máxima para este mercado es 1.97, inferior a la victoria directa (2.05), ofreciendo menor valor con la misma probabilidad estimada de triunfo local."
+}
+],
+"riesgos": [
+"Incertidumbre real sobre las lesiones de Marseille: si varios titulares (Balerdi, Kondogbia, etc.) resultan estar ausentes, la probabilidad de victoria local podría disminuir.",
+"Lyon podría reaccionar positivamente tras su primera derrota en meses y mostrar su mejor versión a pesar de las bajas.",
+"El árbitro Jérôme Brisard tiene una media de tarjetas y penaltis ligeramente superior, lo que podría influir en el desarrollo del partido (expulsiones, penaltis) y alterar el resultado esperado."
+]
+}
