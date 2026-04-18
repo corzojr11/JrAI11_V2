@@ -1,0 +1,101 @@
+A. Diagnóstico crítico
+Lo que está bien:
+La combinación Poisson + Dixon-Coles es la base correcta y probada (mejora real de ~10-15% en log-likelihood y precisión de draws frente a Poisson puro, según implementaciones documentadas). El multi-factor (ELO + xG manual + forma ponderada) reduce varianza mejor que modelos univariados. La comparación modelo vs cuotas implícitas + EV es el corazón de cualquier value betting serio y está correctamente colocado. Los guardrails actuales (“favorito estructural” + penalización input quality) evitan desastres obvios. El referee como input de calidad es un acierto parcial.
+Lo que está mal o incompleto:
+Los ELO y xG manuales son el punto más débil del sistema. Son subjetivos, no reproducibles, no se actualizan con nuevos resultados y crean sesgo humano sistemático. El contexto Perplexity → Ollama es ineficiente: Perplexity trae ruido reciente pero Ollama lo estructura con prompts variables → inconsistencia run-to-run. Las reglas de emisión (confianza + EV + fit + calidad input) son demasiado conservadoras → exceso de NO BET (esto es un problema estructural, no de datos). El handicap es “lectura básica de línea” → insuficiente; no usa la distribución completa del goal difference. Las tarjetas solo afectan calidad input; no tienen modelo propio. Falta cualquier mecanismo de feedback: el motor no sabe si sus picks ganan o pierden.
+Sesgos estructurales:
+
+Subestimación de varianza en tails (cuotas largas) porque Poisson+Dixon-Coles sin time-weighting ni marginales alternativos ignora overdispersion en ligas específicas.
+Inconsistencia por inputs manuales: el mismo partido hoy vs mañana puede cambiar pick solo por tu carga de ELO/xG.
+Conservadurismo excesivo: el motor prefiere NO BET antes que aceptar picks con edge moderado pero input quality 0.7-0.8.
+
+B. Riesgos cuantitativos
+
+Sobreajuste: si ajustas rho de Dixon-Coles o pesos de forma en muestra pequeña o sin time-decay (ξ ≈ 0.001-0.003 recomendado), el modelo infla edge en backtest pero falla live.
+Mal calibrado: Poisson subestima draws y 0-0/1-1; Dixon-Coles corrige solo esos cuatro marcadores. Sin extensión (Sarmanov family) no corrige 2-0/3-0 en ligas con más dominio. Probabilidades de handicap y O/U tienen error sistemático porque no usas Skellam.
+Mercados mal tratados: Handicap (distribución goal diff ignorada), tarjetas (sin modelo), BTTS (solo correlación débil vía rho).
+Picks a bloquear mejor: cualquier pick donde (xG_diff < 0.8 y ELO_diff < 80) pero edge > 8% por mispricing de casa → falso value. También picks en cuotas > 8.0 con model_prob < 18% y input_quality < 0.75 (ruido de contexto o lesiones no capturadas).
+
+C. Mejoras de modelo (prioridad y código Python concreto)
+Agregar primero (mayor impacto inmediato):
+
+Time-weighting en fitting de Poisson/Dixon-Coles + dynamic ELO.
+Skellam para handicap y total goals.
+
+Qué quitaría: nada aún. Simplificaría: quita carga manual de ELO y xG en cuanto tengas dynamic.
+Mejoras específicas:
+
+1X2 y BTTS:
+Mantén Poisson pero ajusta con time-decay:Pythonimport numpy as np
+from scipy.optimize import minimize
+def poisson_ll(params, data, xi=0.002):  # xi = decay
+    # data = df con fecha, goals_home, goals_away, teams
+    weights = np.exp(-xi * (max_date - data.date))
+    # fit attack/defense + rho Dixon-ColesUsa Sarmanov family si quieres mover más de 4 marcadores (código en arXiv 2307.02139 implementable en 50 líneas).
+Over/Under:
+Calcula distribución total goals = home + away (Skellam o suma Poisson) en vez de simple suma de medias.
+Handicap:Pythonfrom scipy.stats import skellam
+mu_home = attack_home + defense_away + home_adv
+mu_away = attack_away + defense_home
+prob_handicap = skellam.cdf(line, mu_home, mu_away)  # o pmf para Asian
+Favoritos vs underdogs:
+Añade home_advantage dinámico (fit por liga) + penalización underdog si forma_ponderada < 0.4 y xG_diff < 1.2.
+Picks de valor:
+Calcula EV con calibración Brier post-backtest. No uses raw prob; ajusta con Platt scaling o isotonic regression (sklearn).
+
+D. Mejoras de decisión
+PICK / NO BET más inteligente:
+Umbrales adaptativos por decil de confianza histórica (calculados del backtest). Ejemplo:
+Pythonconf_bins = pd.qcut(df_historico.confidence, 10)
+min_ev_por_bin = df_historico.groupby(conf_bins)['realized_ev'].quantile(0.6)
+Si EV > min_ev_por_bin[tu_conf] y structural_support (xG_diff > 1.0 o ELO_diff > 100) → PICK. Si no → NO BET. Esto reduce NO BET sin perder prudencia.
+Stake:
+Fractional Kelly obligatorio.
+Pythondef stake_kelly(p_model, odds, fraction=0.35, bankroll):
+    edge = p_model * odds - 1
+    if edge <= 0: return 0
+    k = edge / (odds - 1)
+    return bankroll * k * fraction
+Capa extra: max_stake = 4% bankroll y cap por cuota (nunca >2% si odds > 6.0).
+Combinar soporte estructural + EV:
+if (structural_score >= 0.75 and EV > 0.04 and confidence > 68 and variance_penalty < 0.15): PICK
+Variance_penalty = (model_var - expected_var) / expected_var (de Poisson).
+Evitar picks locos por cuota alta:
+Hard cap: odds_1X2 < 9.0, odds_OU < 5.0, odds_handicap < 7.0.
+Soft penalty: si model_prob < 0.5 * implied_prob → multiplicar EV por 0.4.
+E. Aprendizaje
+Variables a guardar (tabla SQLite obligatoria):
+SQLpicks_log (
+    match_date, home, away, league,
+    market, model_prob, implied_prob, odds_decimal, raw_EV,
+    confidence, input_quality, referee_yellow_avg, context_score,
+    structural_flag, pick_flag, stake_sug,
+    actual_result, actual_goals_h, actual_goals_a, realized_profit
+)
+Métricas post-partido (script semanal):
+
+ROI y yield por market / conf_bin / input_quality_bin
+Brier score y calibration plot (actual vs predicted)
+Hit rate real vs confidence
+EV realized vs EV predicted
+Max drawdown y Sharpe de la secuencia de picks
+
+Módulo de aprendizaje:
+
+Cargar picks_log + resultados reales.
+Re-fit parámetros (Poisson/Dixon rho, ELO K, pesos forma) maximizando log-likelihood ponderada.
+Optimizar thresholds de decisión con scipy.optimize (objetivo: maximizar ROI sujeto a max_drawdown < 15% y min_picks > 30/mes).
+Opcional (pero potente): LogisticRegression(features = [conf, EV, input_quality, structural]) para predecir probabilidad real de hit y ajustar conf mínima dinámicamente.
+
+F. Roadmap (orden exacto y timeline realista)
+Semana 1 (mayor impacto inmediato):
+Implementar logging SQLite + backtest histórico (2-3 temporadas). Cuantifica exactamente % NO BET, ROI real, calibration error. Sin esto todo lo demás es ciego.
+Semanas 2-3:
+Dynamic ELO (K=25, home_adv por liga) + time-weighting Dixon-Coles (ξ optimizado). Reemplaza carga manual. Impacto: +8-12% precisión base.
+Semana 4:
+Handicap → Skellam completo + referee Poisson independiente para tarjetas (modelo propio, no solo input).
+Semana 5:
+Contexto: prompt Ollama fijo + context_score automático. Reglas de decisión adaptativas + fractional Kelly.
+Semana 6+:
+Loop completo de aprendizaje (re-fit + re-optimización umbrales cada 4 semanas). Añadir Sarmanov o negative binomial solo si backtest muestra overdispersion clara.
+Este orden da impacto real: logging → inputs dinámicos → modelos avanzados → decisión inteligente → aprendizaje cerrado. El sistema actual es sólido en base pero está lastrado por inputs manuales y falta de feedback. Con estos cambios (todo código Python estándar: pandas, scipy, statsmodels, sqlite3) pasas de “matemáticamente interesante” a motor profesional, consistente y rentable a largo plazo. No hay atajos mágicos; el trabajo está en el dinamismo y el loop de aprendizaje.

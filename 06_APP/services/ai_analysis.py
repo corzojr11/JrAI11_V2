@@ -28,49 +28,17 @@ _groq_request_log = deque()
 _groq_lock = asyncio.Lock()
 
 PERSONALIDADES = {
-    "Auto-Gemini-Conservador": {
-        "descripcion": "Ultra conservador. Solo apuesta si EV > 15% y al menos 7/8 sistemas confirman.",
-        "instruccion": "Eres un analista ultra conservador. Solo emites pick si el EV supera el 15% y al menos 7 de 8 sistemas matematicos confirman. Prefieres NO BET antes que arriesgar con senales debiles.",
-    },
-    "Auto-Gemini-ValuePuro": {
-        "descripcion": "Value puro. Busca desajustes matematicos, ignora narrativa.",
-        "instruccion": "Eres un analista de value betting puro. Te enfocas exclusivamente en desajustes entre probabilidad real calculada y probabilidad implicita de la cuota. Ignoras contexto narrativo y priorizas el EV matematico.",
+    "Auto-Ollama-Conservador": {
+        "descripcion": "Modelo local (costo cero) para análisis estructurado y cauto.",
+        "instruccion": "Eres un analista ultra conservador local. Solo emites pick si la cuota presenta valor estadistico y evitar los riesgos no controlables. Prefieres NO BET.",
     },
     "Auto-Gemini-Contextual": {
-        "descripcion": "Prioriza contexto humano: lesiones, motivacion, fatiga.",
-        "instruccion": "Eres un analista contextual. Priorizas factores humanos verificables: lesiones de titulares, motivacion asimetrica y fatiga acumulada. Los numeros son tu base, pero el contexto es tu diferenciador.",
+        "descripcion": "Analista de contexto humano y narrativo (lesiones, rotaciones).",
+        "instruccion": "Eres un analista contextual. Priorizas factores humanos verificables: lesiones de titulares, motivacion y fatiga acumulada.",
     },
-    "Auto-Groq-Contrarian": {
-        "descripcion": "Busca valor donde la mayoria no mira. Favorece al infravalorado.",
-        "instruccion": "Eres un analista contrarian. Buscas sistematicamente valor en el equipo que el mercado subestima. Cuando la cuota del visitante o del equipo de menor reputacion tiene EV positivo, lo priorizas.",
-    },
-    "Auto-Groq-Mercados": {
-        "descripcion": "Especialista en mercados secundarios: corners y tarjetas.",
-        "instruccion": "Eres un especialista en mercados secundarios. Tu foco principal son corners, tarjetas y BTTS. Analizas estos mercados con prioridad cuando existan datos utiles.",
-    },
-    "Auto-Groq-FormaReciente": {
-        "descripcion": "Solo confia en los ultimos 3 partidos. El pasado lejano no importa.",
-        "instruccion": "Eres un analista de forma reciente. Das peso maximo a los ultimos 3 partidos de cada equipo y minimo peso al historico lejano. Los equipos cambian rapido y lo reciente predice mejor.",
-    },
-    "Auto-OpenRouter-Historico": {
-        "descripcion": "Prioriza H2H y tendencias historicas de temporada completa.",
-        "instruccion": "Eres un analista historico. Priorizas el H2H entre los equipos y las tendencias consolidadas de la temporada completa. Los patrones historicos son mas confiables que las rachas cortas.",
-    },
-    "Auto-SambaNova-PesoPesado": {
-        "descripcion": "Analisis profundo con Llama 70B. Integra todos los factores.",
-        "instruccion": "Eres el analista de peso pesado del sistema. Integras factores matematicos, contextuales, de mercado y motivacionales. Tu salida debe ser consistente y orientada a decision.",
-    },
-    "Auto-Ollama-Qwen": {
-        "descripcion": "Qwen 2.5 14B local. Especialista en JSON y analisis matematico estructurado.",
-        "instruccion": "Eres un analista local especializado en analisis matematico estructurado. Eres muy preciso con numeros, EV y sistemas cuantitativos. Siempre emites JSON bien formado.",
-    },
-    "Auto-Ollama-Llama": {
-        "descripcion": "Llama 3.1 8B local. Analista rapido de razonamiento general.",
-        "instruccion": "Eres un analista rapido y directo. Tu fortaleza es el razonamiento logico claro. Vas directo a los numeros y al veredicto.",
-    },
-    "Auto-Ollama-Phi4": {
-        "descripcion": "Phi4 local. Analista fuerte en razonamiento matematico.",
-        "instruccion": "Eres un analista especializado en razonamiento matematico y estadistico. Priorizas los sistemas cuantitativos sobre el contexto narrativo.",
+    "Auto-Groq-Contraste": {
+        "descripcion": "Busca el valor en la cuota del equipo no favorito.",
+        "instruccion": "Eres un analista contrarian. Buscas sistematicamente valor en el equipo que el mercado subestima. Analiza rapido las debilidades del favorito.",
     },
 }
 
@@ -679,213 +647,149 @@ def _resultado_error(personalidad, error, raw_output=""):
 
 
 async def _llamar_gemini(personalidad, prompt_analista, api_key):
-    try:
-        import aiohttp
+    import aiohttp
+    max_retries = 1
+    
+    for attempt in range(max_retries + 1):
+        try:
+            prompt_modelo = _preparar_prompt_para_modelo(
+                prompt_analista,
+                max_chars=GEMINI_PROMPT_MAX_CHARS,
+            )
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"gemini-2.0-flash:generateContent?key={api_key}"
+            )
+            instruccion = PERSONALIDADES[personalidad]["instruccion"]
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": (
+                                    f"{instruccion}\n\n"
+                                    "IMPORTANTE: Responde solo con JSON valido. "
+                                    "Sin texto adicional ni markdown.\n\n"
+                                    f"{prompt_modelo}"
+                                )
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 2048,
+                    "responseMimeType": "application/json",
+                },
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                # Aumentamos timeout a 30s
+                timeout = aiohttp.ClientTimeout(total=30)
+                async with session.post(url, json=payload, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if not data.get("candidates"):
+                            return _resultado_error(personalidad, "Gemini no devolvio candidatos")
+                        texto = data["candidates"][0]["content"]["parts"][0]["text"]
+                        pick_json = _parsear_json_modelo(texto)
+                        return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
 
-        prompt_modelo = _preparar_prompt_para_modelo(
-            prompt_analista,
-            max_chars=GEMINI_PROMPT_MAX_CHARS,
-        )
-        url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.5-flash:generateContent?key={api_key}"
-        )
-        instruccion = PERSONALIDADES[personalidad]["instruccion"]
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": (
-                                f"{instruccion}\n\n"
-                                "IMPORTANTE: Responde solo con JSON valido. "
-                                "Sin texto adicional ni markdown.\n\n"
-                                f"{prompt_modelo}"
-                            )
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 2048,
-                "responseMimeType": "application/json",
-            },
-        }
-        async with aiohttp.ClientSession() as session:
-            timeout = aiohttp.ClientTimeout(total=20)
-            async with session.post(url, json=payload, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    texto = data["candidates"][0]["content"]["parts"][0]["text"]
-                    pick_json = _parsear_json_modelo(texto)
-                    return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
+                    # Reintento solo para errores de servidor
+                    if resp.status in [500, 502, 503, 504] and attempt < max_retries:
+                        await asyncio.sleep(2)
+                        continue
 
-                error = await resp.text()
-                return _resultado_error(
-                    personalidad,
-                    f"HTTP {resp.status}: {error[:200]}",
-                    error,
-                )
-    except json.JSONDecodeError as e:
-        return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
-    except Exception as e:
-        return _resultado_error(personalidad, str(e), locals().get("texto", ""))
+                    error = await resp.text()
+                    return _resultado_error(
+                        personalidad,
+                        f"HTTP {resp.status}: {error[:200]}",
+                        error,
+                    )
+        except asyncio.TimeoutError:
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+                continue
+            return _resultado_error(personalidad, "Timeout tras reintentos")
+        except json.JSONDecodeError as e:
+            return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
+        except Exception as e:
+            return _resultado_error(personalidad, f"Error Gemini: {str(e)}")
+    
+    return _resultado_error(personalidad, "Fallo total en Gemini")
 
 
 async def _llamar_groq(personalidad, prompt_analista, api_key):
-    try:
-        import aiohttp
+    import aiohttp
+    max_retries = 1
+    
+    for attempt in range(max_retries + 1):
+        try:
+            await _esperar_turno_groq()
+            prompt_modelo = _preparar_prompt_para_modelo(
+                prompt_analista,
+                max_chars=GROQ_PROMPT_MAX_CHARS,
+            )
+            url = "https://api.groq.com/openai/v1/chat/completions"
+            instruccion = PERSONALIDADES[personalidad]["instruccion"]
+            payload = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{instruccion}\n\n"
+                            "Responde unicamente con un JSON valido. "
+                            "No expliques calculos extensos. Usa campos cortos y consistentes."
+                        ),
+                    },
+                    {"role": "user", "content": prompt_modelo},
+                ],
+                "temperature": 0.2,
+                "max_tokens": 900,
+                "response_format": {"type": "json_object"},
+            }
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+            async with aiohttp.ClientSession() as session:
+                # Aumentamos timeout a 30s
+                timeout = aiohttp.ClientTimeout(total=30)
+                async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if not data.get("choices"):
+                            return _resultado_error(personalidad, "Groq no devolvió opciones")
+                        texto = data["choices"][0]["message"]["content"]
+                        pick_json = _parsear_json_modelo(texto)
+                        return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
 
-        await _esperar_turno_groq()
-        prompt_modelo = _preparar_prompt_para_modelo(
-            prompt_analista,
-            max_chars=GROQ_PROMPT_MAX_CHARS,
-        )
-        url = "https://api.groq.com/openai/v1/chat/completions"
-        instruccion = PERSONALIDADES[personalidad]["instruccion"]
-        payload = {
-            "model": "llama-3.3-70b-versatile",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"{instruccion}\n\n"
-                        "Responde unicamente con un JSON valido. "
-                        "No expliques calculos extensos. Usa campos cortos y consistentes."
-                    ),
-                },
-                {"role": "user", "content": prompt_modelo},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 900,
-            "response_format": {"type": "json_object"},
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        async with aiohttp.ClientSession() as session:
-            timeout = aiohttp.ClientTimeout(total=20)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    texto = data["choices"][0]["message"]["content"]
-                    pick_json = _parsear_json_modelo(texto)
-                    return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
+                    # Reintento solo para errores transitorios o Rate Limits
+                    if (resp.status in [500, 502, 503, 504] or resp.status == 429) and attempt < max_retries:
+                        await asyncio.sleep(3)
+                        continue
 
-                error = await resp.text()
-                return _resultado_error(
-                    personalidad,
-                    f"HTTP {resp.status}: {error[:200]}",
-                    error,
-                )
-    except json.JSONDecodeError as e:
-        return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
-    except Exception as e:
-        return _resultado_error(personalidad, str(e), locals().get("texto", ""))
-
-
-async def _llamar_openrouter(personalidad, prompt_analista, api_key):
-    try:
-        import aiohttp
-
-        prompt_modelo = _preparar_prompt_para_modelo(
-            prompt_analista,
-            max_chars=OPENROUTER_PROMPT_MAX_CHARS,
-        )
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        instruccion = PERSONALIDADES[personalidad]["instruccion"]
-        payload = {
-            "model": "qwen/qwen3-8b:free",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"{instruccion}\n\n"
-                        "Responde unicamente con un JSON valido sin texto adicional."
-                    ),
-                },
-                {"role": "user", "content": prompt_modelo},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 1200,
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/corzojr11/JrAI11_V2",
-            "X-Title": "JrAI11_V2",
-        }
-        async with aiohttp.ClientSession() as session:
-            timeout = aiohttp.ClientTimeout(total=25)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    texto = data["choices"][0]["message"]["content"]
-                    pick_json = _parsear_json_modelo(texto)
-                    return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
-
-                error = await resp.text()
-                return _resultado_error(
-                    personalidad,
-                    f"HTTP {resp.status}: {error[:200]}",
-                    error,
-                )
-    except json.JSONDecodeError as e:
-        return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
-    except Exception as e:
-        return _resultado_error(personalidad, str(e), locals().get("texto", ""))
+                    error = await resp.text()
+                    return _resultado_error(
+                        personalidad,
+                        f"HTTP {resp.status}: {error[:200]}",
+                        error,
+                    )
+        except asyncio.TimeoutError:
+            if attempt < max_retries:
+                await asyncio.sleep(3)
+                continue
+            return _resultado_error(personalidad, "Timeout agotado en Groq")
+        except json.JSONDecodeError as e:
+            return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
+        except Exception as e:
+            return _resultado_error(personalidad, f"Error Groq: {str(e)}")
+            
+    return _resultado_error(personalidad, "Fallo critico en Groq")
 
 
-async def _llamar_sambanova(personalidad, prompt_analista, api_key):
-    try:
-        import aiohttp
 
-        prompt_modelo = _preparar_prompt_para_modelo(
-            prompt_analista,
-            max_chars=SAMBANOVA_PROMPT_MAX_CHARS,
-        )
-        url = "https://api.sambanova.ai/v1/chat/completions"
-        instruccion = PERSONALIDADES[personalidad]["instruccion"]
-        payload = {
-            "model": "Meta-Llama-3.3-70B-Instruct",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"{instruccion}\n\n"
-                        "Responde unicamente con un JSON valido sin texto adicional."
-                    ),
-                },
-                {"role": "user", "content": prompt_modelo},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 1400,
-        }
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-        async with aiohttp.ClientSession() as session:
-            timeout = aiohttp.ClientTimeout(total=25)
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    texto = data["choices"][0]["message"]["content"]
-                    pick_json = _parsear_json_modelo(texto)
-                    return _resultado_ok(personalidad, pick_json, texto, prompt_modelo)
-
-                error = await resp.text()
-                return _resultado_error(
-                    personalidad,
-                    f"HTTP {resp.status}: {error[:200]}",
-                    error,
-                )
-    except json.JSONDecodeError as e:
-        return _resultado_error(personalidad, f"JSON invalido: {e}", locals().get("texto", ""))
-    except Exception as e:
-        return _resultado_error(personalidad, str(e), locals().get("texto", ""))
 
 
 async def _llamar_ollama(personalidad, prompt_analista, modelo="qwen2.5:14b"):
@@ -939,20 +843,14 @@ async def _llamar_ollama(personalidad, prompt_analista, modelo="qwen2.5:14b"):
 def _construir_tareas(prompt_analista):
     google_key = os.getenv("GOOGLE_API_KEY", "")
     groq_key = os.getenv("GROQ_API_KEY", "")
-    sambanova_key = os.getenv("SAMBANOVA_API_KEY", "")
 
     tareas = []
     if google_key:
-        tareas.append(_llamar_gemini("Auto-Gemini-Conservador", prompt_analista, google_key))
+        tareas.append(_llamar_gemini("Auto-Gemini-Contextual", prompt_analista, google_key))
     if groq_key:
-        tareas.append(_llamar_groq("Auto-Groq-Contrarian", prompt_analista, groq_key))
-        tareas.append(_llamar_groq("Auto-Groq-Mercados", prompt_analista, groq_key))
-        tareas.append(_llamar_groq("Auto-Groq-FormaReciente", prompt_analista, groq_key))
-    if sambanova_key:
-        tareas.append(_llamar_sambanova("Auto-SambaNova-PesoPesado", prompt_analista, sambanova_key))
-    tareas.append(_llamar_ollama("Auto-Ollama-Qwen", prompt_analista, "qwen2.5:14b"))
-    tareas.append(_llamar_ollama("Auto-Ollama-Llama", prompt_analista, "llama3.1:8b"))
-    tareas.append(_llamar_ollama("Auto-Ollama-Phi4", prompt_analista, "phi4:latest"))
+        tareas.append(_llamar_groq("Auto-Groq-Contraste", prompt_analista, groq_key))
+    
+    tareas.append(_llamar_ollama("Auto-Ollama-Conservador", prompt_analista, "llama3.1:8b"))
     return tareas
 
 
@@ -993,8 +891,6 @@ def verificar_apis_configuradas():
     estado = {
         "Gemini (Google)": bool(os.getenv("GOOGLE_API_KEY")),
         "Groq": bool(os.getenv("GROQ_API_KEY")),
-        "OpenRouter": bool(os.getenv("OPENROUTER_API_KEY")),
-        "SambaNova 70B": bool(os.getenv("SAMBANOVA_API_KEY")),
     }
     try:
         import requests

@@ -1,0 +1,92 @@
+Aquí tienes la auditoría técnica y el plan de reestructuración para tu app en Python.
+
+A. Diagnóstico Crítico
+Lo que está bien:
+
+La base matemática: Poisson + Dixon-Coles es el estándar de la industria para empezar. Corrige el problema de los empates a cero que el Poisson clásico subestima.
+
+Guardrails y Calidad de Input: Penalizar la confianza del modelo cuando faltan datos es una medida de mitigación de riesgo excelente.
+
+Separación de responsabilidades: Usar IAs (Ollama/Perplexity) para estructurar el contexto cualitativo y el motor matemático para decidir.
+
+Lo que está mal o incompleto (Cuellos de botella):
+
+La carga manual: Ingresar ELO y xG manualmente es insostenible, lento y propenso a errores de "dedo". Rompe la escalabilidad de cualquier sistema en Python.
+
+El flujo del LLM (El riesgo de ruido): Perplexity busca bien, pero Ollama puede alucinar el peso de una noticia. Si un equipo tiene a su delantero lesionado, el LLM no sabe cuánto afecta eso matemáticamente a la cuota.
+
+Dependencia estática: Si el ELO o xG manual está desactualizado, tu modelo asume un valor irreal, calculando un EV positivo falso.
+
+B. Riesgos Cuantitativos
+¿Por qué ves valor en cuotas locas? (Sesgos estructurales):
+
+El sesgo Favorito-Underdog (Favorite-Longshot Bias): Las casas de apuestas inflan las cuotas de los no favoritos y reducen las de los favoritos. Tu modelo de Poisson no sabe esto; calcula una probabilidad pura, la compara con la cuota "sucia" de la casa, y grita "¡Valor!" en el underdog. Es un espejismo matemático.
+
+Sobreajuste en la "Forma Ponderada": Si le das mucho peso a los últimos 5 partidos, el modelo sobrerreacciona a la varianza a corto plazo.
+
+Tratamiento erróneo del Over/Under y BTTS: Poisson asume que los goles son eventos independientes. En el fútbol no lo son. Si un equipo va perdiendo 1-0 en el minuto 80, ataca con todo. Poisson no entiende los "estados del juego", por lo que sus estimaciones de O/U y BTTS suelen estar mal calibradas.
+
+C. Mejoras de Modelo (El Motor Matemático)
+Aquí es donde dejamos de ser un script y pasamos a ser un modelo quant.
+
+1X2 y Handicap (Transición a Skellam): Para calcular handicaps asiáticos y líneas de gol, no uses Poisson puro. Implementa en scipy.stats la Distribución de Skellam (que es la diferencia entre dos distribuciones de Poisson). Es la forma matemáticamente correcta de calcular probabilidades de diferencia de goles.
+
+Ajuste de Cuotas (Des-marginización): Antes de comparar tu probabilidad con la de la casa, tienes que "limpiar" la cuota de la casa quitándole el vig (margen). Aplica el método de Shin o Margin Proportional to Odds. Si no limpias la cuota, tu cálculo de EV es basura.
+
+O/U y BTTS: Introduce un factor de correlación. Implementa un Bivariate Poisson en lugar de dos Poisson independientes. Esto asume que si el local marca, la probabilidad de que el visitante marque cambia.
+
+El Contexto Estructurado (Ollama): Limita a Ollama. No dejes que decida. Haz que Ollama solo devuelva JSONs binarios: {"lesion_jugador_clave": true, "cansancio_viaje": false}. Luego, en tu código Python, asigna un modificador de ELO fijo a cada variable (ej. lesión clave = -50 puntos de ELO).
+
+D. Mejoras de Decisión (Filtros y Stake)
+Para arreglar el exceso de "NO BET" y las cuotas locas:
+
+Umbrales de EV Dinámicos: Actualmente, asumo que pides un EV > X% para disparar un PICK. Eso es un error. Exige umbrales variables.
+
+Para una cuota 1.50, un EV de +3% es un PICK sólido.
+
+Para una cuota 5.00, un EV de +3% es puro ruido estadístico. Exige un EV de +15% para cuotas largas. Esto filtra las cuotas locas automáticamente.
+
+Stake vía Criterio de Kelly Fraccional: Deja de adivinar el stake. Usa la fórmula de Kelly: Stake = (Probabilidad_Modelo * Cuota - 1) / (Cuota - 1).
+
+Regla de oro: Nunca uses el 100% de Kelly. En tu Streamlit, configura un slider para usar un Kelly del 10% al 25% (Fractional Kelly). Esto protege tu bankroll y reduce naturalmente el stake en cuotas altas, resolviendo tu miedo a la sobre-agresividad.
+
+Filtro de Liquidez: Obliga al sistema a verificar en qué liga está apostando. Las ligas menores tienen más ineficiencias (más valor), pero las ligas mayores (Premier, LaLiga) tienen mercados eficientes. Tu umbral de confianza debe ser más alto en ligas grandes.
+
+E. Aprendizaje (El Loop de Retroalimentación)
+Un motor profesional no solo acierta o falla; mide qué tan cerca estuvo. Debes crear una base de datos (SQLite o PostgreSQL local) y guardar esto por cada iteración:
+
+Variables a guardar:
+ID_Partido | Fecha | Liga | ELO_L | ELO_V | xG_L | xG_V | Prob_L_Modelo | Prob_E_Modelo | Prob_V_Modelo | Cuota_Apostada | Cuota_Cierre (CLV) | Resultado | Profit | Score_Ollama
+
+Métricas a auditar (Tu Dashboard de Streamlit):
+
+Brier Score: Mide la precisión de tus probabilidades, no tus ganancias. Si tu modelo dice 80% de victoria y el equipo pierde, el modelo falló. Si dice 30% y gana, el modelo acertó. El Brier Score audita la calibración matemática real.
+
+Closing Line Value (CLV): La métrica reina. ¿Apostaste a cuota 2.00 y cerró en 1.80 antes del pitazo inicial? Entonces tu modelo es ganador a largo plazo, sin importar si ese partido en específico se perdió. El sistema debe aprender a optimizar el CLV, no solo el Yield.
+
+F. Roadmap Exacto de Implementación
+Fase 1: Higiene de Datos y Automatización (Semanas 1-2)
+
+Acción: Eliminar ELO y xG manual.
+
+Código: Conectar una API (como API-Football o web scraping básico de FBref) para alimentar tu Dataframe en pandas de forma automática. Si sigues en manual, el motor tiene un techo de cristal.
+
+Fase 2: Calibración del Riesgo y Matemáticas (Semanas 3-4)
+
+Acción: Implementar la limpieza de margen de las bookies antes de calcular EV.
+
+Acción: Integrar Kelly Fraccional para el cálculo de Stake.
+
+Acción: Cambiar los umbrales estáticos de "NO BET" a umbrales de EV basados en la cuota (curva de riesgo dinámica).
+
+Fase 3: Contención Cualitativa (Semana 5)
+
+Acción: Restringir el prompt de Perplexity/Ollama. Su única salida permitida será un JSON con flags booleanos. Tu código Python traducirá esos flags en ajustes de +/- Lambda en tu modelo de Poisson.
+
+Fase 4: Base de Datos y Métricas de Verdad (Semanas 6+)
+
+Acción: Construir el módulo de SQLite. Registrar cada pick con las probabilidades del modelo vs las de mercado.
+
+Acción: Crear una pestaña en Streamlit exclusiva para medir el Brier Score y el CLV de tu motor histórico.
+
+Samizhito, el sistema actual tiene mucho mérito, pero está atrapado entre ser un modelo estadístico y un tipster heurístico. Aplica los umbrales dinámicos y el Kelly fraccional de inmediato; solo con eso, reducirás los "NO BET" estériles y aniquilarás el riesgo de las cuotas locas irracionales.

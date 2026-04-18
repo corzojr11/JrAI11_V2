@@ -1,0 +1,242 @@
+A. Diagnóstico crítico
+Lo que está bien
+
+Arquitectura modular: cada componente (Poisson, DC, ELO, xG, forma, contexto, guardrails) es independiente, permitiendo aislar y corregir fallos.
+
+Uso de valor esperado (EV) y comparación con cuotas reales: es la base de cualquier sistema de apuestas basado en valor.
+
+Penalización por falta de datos (“calidad del input”): introduce disciplina y evita decisiones con información insuficiente.
+
+Combinación de búsqueda externa (Perplexity) + estructuración local (Ollama): es una forma razonable de enriquecer el contexto sin depender completamente de una IA externa para la decisión final.
+
+Guardrails sobre cuotas largas y favorito estructural: controla apuestas extremas sin soporte sólido.
+
+Lo que está mal o incompleto
+
+Demasiados NO BET: la función de decisión parece aplicar múltiples filtros binarios (AND lógico) que se solapan, matando oportunidades válidas. Es probable que los umbrales de EV mínimo, confianza, calidad de input y “fit de mercado” no estén calibrados conjuntamente.
+
+Dependencia manual de ELO y xG: introduce retraso, sesgo humano y falta de consistencia. Un sistema automatizado debe actualizar estos valores por sí mismo.
+
+Forma ponderada sin normalización por dificultad del rival: un equipo con 4 victorias seguidas contra rivales débiles infla la forma artificialmente.
+
+Dixon-Coles sin recalibración: aplica una corrección genérica para marcadores bajos, pero su efecto no se ajusta por liga ni por media de goles, pudiendo distorsionar totales y BTTS.
+
+Contexto cualitativo no integrado cuantitativamente: se usa como bandera (penaliza confianza), pero no modifica las probabilidades. Se pierde poder predictivo de variables como lesiones clave o motivación.
+
+Señal del árbitro infrautilizada: solo penaliza calidad de input, en lugar de modelar mercados de tarjetas o faltas.
+
+Sin calibración de probabilidades: las probabilidades generadas (Poisson, DC) nunca se contrastan con resultados reales; el EV puede estar sistemáticamente sesgado.
+
+Piezas débiles
+
+Actualización manual de ELO/xG: es el punto más frágil para la escalabilidad y fiabilidad.
+
+Contexto libre no estructurado: al no cuantificarse, su efecto es difuso y no se puede calibrar.
+
+Modelo de handicaps ausente: se menciona “arbitraje de líneas” pero no un modelo de probabilidades propio para handicaps, dejando ese mercado sin explotar.
+
+Falta de histórico y backtesting: no se guardan picks con resultados, impidiendo ajustar umbrales o medir rendimiento real.
+
+Sesgos o errores estructurales
+
+Sesgo hacia cuotas largas por sobrestimación de probabilidades raras: el modelo base (Poisson) tiende a dar probabilidades no nulas a eventos muy improbables, generando EV positivo en cuotas altas que en realidad no tienen valor. Los guardrails mitigan pero no corrigen la causa raíz.
+
+Sesgo de confirmación en contexto: al usar Perplexity + Ollama, se puede estar introduciendo información que confirma la hipótesis previa, en lugar de aportar datos objetivos.
+
+Sesgo de calidad del input excesivo: si la penalización es lineal, se castigan picks con alta EV pero con una variable secundaria ausente, cuando deberían evaluarse con mayor incertidumbre pero no descartarse.
+
+Sesgo de “favorito estructural” demasiado restrictivo: puede bloquear underdogs con EV real si el favorito es claro según ELO pero las cuotas ofrecen valor por lesiones o contexto.
+
+B. Riesgos cuantitativos
+Sobreajuste
+
+Parámetros de Poisson y DC fijos: si se ajustan manualmente por liga o percepción, se sobreajustan a datos recientes.
+
+Contexto estructurado como modificador ad-hoc: si se usa para cambiar probabilidades sin validación histórica, introduce ruido no calibrado.
+
+Uso de múltiples penalizaciones binarias: puede generar un modelo de decisión que funciona bien en muestra pero falla en producción por no estar calibrado sobre resultados reales.
+
+Calibración errónea
+
+Probabilidades de Poisson sin recalibrar: en eventos de baja probabilidad (Over 3.5, underdog gana), el error es grande y el EV falso.
+
+Comparación con cuotas sin ajuste por margen: las cuotas de las casas incluyen overround; si no se extrae la probabilidad implícita neta, el EV se sobrestima.
+
+Confianza y stake subjetivos: la confianza basada en calidad de input y contexto cualitativo no está ligada a una métrica estadística (ej. desviación estándar de la estimación), por lo que el stake puede no reflejar el verdadero edge.
+
+Mercados mal tratados
+
+BTTS: la probabilidad derivada de Poisson (multiplicando marginales) ignora la correlación entre ataques y defensas.
+
+Handicap: sin un modelo de distribución conjunta de goles, la línea justa se estima pobremente.
+
+Tarjetas: no se modela pese a tener datos de árbitros.
+
+Picks a bloquear mejor
+
+Cuotas muy altas con EV positivo pero probabilidad real baja: aunque el EV sea >0, la varianza es enorme y la tasa de acierto ínfima. Deberían bloquearse si la probabilidad estimada es inferior a un umbral (ej. 12% para 1X2, 20% para over).
+
+Picks con calidad de input crítica ausente: si falta ELO actualizado, lesiones clave o xG reciente, deberían ser NO BET directamente, no solo penalizados.
+
+C. Mejoras de modelo
+Estrategias que faltan
+
+Modelo bivariante de goles (Poisson con correlación o cópula) para mejorar BTTS y handicaps.
+
+Actualización automática de ELO y xG (desde fuentes como football-data.co.uk o APIs).
+
+Calibración de probabilidades mediante regresión logística isotónica o Platt scaling sobre datos históricos.
+
+Cuantificación de lesiones y sanciones como regresores (valor de mercado, posición).
+
+Modelo de tarjetas (regresión logística con promedio árbitro, histórico equipos, contexto).
+
+Modelo de córners (Poisson con regresores de estilo de juego).
+
+Qué agregar primero
+
+Calibración de probabilidades: es la base para que el EV sea real.
+
+Actualización automática de ELO/xG: elimina manualidad.
+
+Modelo bivariante de goles: mejora BTTS, handicaps y over/under.
+
+Qué quitar o simplificar
+
+Dixon-Coles sin calibración: si tras pruebas no mejora la calibración, reemplazarlo por el modelo bivariante.
+
+Contexto libre como modificador directo: en lugar de ajustar probabilidades, extraer variables cuantificables (lesiones, motivación, clima) e integrarlas como regresores en el modelo de probabilidades.
+
+Mejoras específicas por mercado
+
+1X2: mantener Poisson base + regresores (lesiones, motivación) + recalibración.
+
+Over/Under: usar modelo bivariante para obtener distribución de goles totales.
+
+BTTS: modelo bivariante directamente (probabilidad de que ambos marquen).
+
+Handicap: derivar de la distribución de diferencia de goles del modelo bivariante.
+
+Favoritos vs underdogs: añadir filtro de probabilidad mínima (ej. 15% para underdog) incluso si EV > umbral.
+
+Picks de valor: calcular EV neto = (prob_calibrada * cuota) – 1 – margen_casa, y aplicar intervalo de confianza a la probabilidad.
+
+D. Mejoras de decisión
+PICK / NO BET más inteligente
+
+Reemplazar los filtros binarios por una función continua que combine:
+
+EV esperado (con intervalo de confianza).
+
+Confianza del modelo (inversa de la varianza de la estimación).
+
+Calidad del input (ponderada por relevancia de cada campo).
+
+Probabilidad mínima (según mercado).
+
+Umbral dinámico: el EV mínimo requerido se ajusta según la cuota (menor para cuotas bajas, mayor para cuotas altas) y la confianza.
+
+Filtro de plausibilidad: si la cuota se desvía >X% de la línea de consenso (media ponderada de casas), exigir EV más alto.
+
+Calibración de stake
+
+Kelly fraccional: stake = (EV * bankroll) / (cuota – 1) * fracción (ej. 0.25).
+
+Factor de confianza: multiplicador 0.2–1.0 basado en calidad de input y varianza de la estimación.
+
+Límites por mercado: stake máximo menor para mercados de baja liquidez (tarjetas, córners).
+
+Combinar soporte estructural con EV
+
+Soporte estructural = métrica compuesta por:
+
+Posición en tabla (relevancia).
+
+Lesiones clave (nº y valor de jugadores ausentes).
+
+Motivación (derbi, objetivos).
+
+Forma ajustada por dificultad.
+
+Este valor se convierte en un multiplicador de confianza (no un filtro binario).
+
+Evitar picks locos por cuota alta
+
+Filtro de probabilidad mínima: no aceptar picks con probabilidad estimada < umbral (ej. 12% en 1X2, 20% en over).
+
+Filtro de incertidumbre: si la desviación estándar de la probabilidad estimada (por bootstrap o calidad input) > 0.1, bloquear.
+
+Comparación con consenso: si el modelo es el único que ve valor y la cuota es >5.0, exigir EV > 20%.
+
+E. Aprendizaje
+Variables a guardar por pick
+
+Fecha, liga, equipos, mercado, cuota tomada, stake, resultado (0/1), EV estimado, confianza (0-1), calidad_input (0-1), probabilidad_modelo, probabilidad_implícita (ajustada por margen), línea_cierre (si disponible).
+
+Contexto cuantificado: lesiones_clave (valor ausente), motivación (escala), forma_ajustada, árbitro_tarjetas_promedio.
+
+Modelo_version, parámetros clave, flags de decisión (por qué se aceptó o rechazó).
+
+Resultado real (acierto/fallo) y beneficio.
+
+Métricas a analizar
+
+Calibración: gráfico de probabilidad estimada vs frecuencia real por deciles.
+
+Rentabilidad por mercado: ROI, yield, drawdown, ratio Sharpe.
+
+Efectividad del EV: correlación entre EV estimado y retorno real.
+
+Impacto de confianza: ROI estratificado por nivel de confianza.
+
+Análisis de sesgos: por rango de cuota, liga, momento de temporada.
+
+Rediseño del módulo de aprendizaje
+
+Backtesting continuo: cada pick se guarda; al final de cada jornada se actualizan métricas.
+
+Reentrenamiento de umbrales: cada N picks (ej. 200), recalibrar los umbrales de EV mínimo y confianza mínimo para maximizar el Sharpe ratio en datos out-of-sample.
+
+Actualización de parámetros: reestimar coeficientes de modelos (ej. lesiones) con ventana móvil de 1-2 años.
+
+Sistema de feedback: permitir marcar picks fallidos por causas externas (lesión no prevista) para ajustar pesos de variables contextuales.
+
+F. Roadmap
+Fase 1: Estabilización y calibración (1-2 semanas)
+Implementar registro histórico completo de picks y decisiones.
+
+Crear backtesting simple para calcular ROI y yield por mercado sobre picks anteriores (si no hay, iniciar colección).
+
+Calibrar probabilidades con regresión logística isotónica usando datos históricos (al menos 2 temporadas).
+
+Automatizar ELO y xG: scripts semanales desde football-data.co.uk o API similar. Eliminar entrada manual.
+
+Fase 2: Mejora de modelos centrales (2-3 semanas)
+Implementar modelo bivariante de goles (Poisson con correlación o cópula) para reemplazar la derivación simple y DC.
+
+Ajustar la función de decisión a una métrica continua (EV + confianza + calidad_input + probabilidad mínima) y calibrar umbrales con backtesting.
+
+Añadir filtro de probabilidad mínima (ej. 12% para 1X2, 25% para over).
+
+Fase 3: Integración de contexto cuantificado (2 semanas)
+Cuantificar lesiones y sanciones: crear base de jugadores clave (valoración) y automatizar actualización.
+
+Rediseñar uso de contexto: Ollama extrae variables cuantificables (lesiones, motivación, clima) que se integran como regresores en el modelo de probabilidades, no como modificador manual.
+
+Añadir modelo de tarjetas usando datos de árbitros y equipos como mercado secundario.
+
+Fase 4: Aprendizaje y optimización (2 semanas)
+Implementar Kelly fraccional con stake limitado por confianza y mercado.
+
+Bucle de retroalimentación: cada 100 picks, recalibrar umbrales de decisión con datos out-of-sample.
+
+Dashboard de monitoreo con métricas de calibración, rentabilidad y drawdown.
+
+Fase 5: Refinamiento final y reducción de IAs externas (continuo)
+Reemplazar Perplexity por scraping estructurado de fuentes confiables (lesiones, noticias) cuando sea posible; reservar IA para casos ambiguos.
+
+Evaluar si Ollama puede ser reducido a extracción de variables cuantificables, dejando narrativa como opción no influyente en la decisión.
+
+Optimizar rendimiento y paralelizar backtesting.
+
+Con este plan, el motor evoluciona de una colección de heurísticas a un sistema cuantitativo, calibrado y autónomo, con capacidad de mejora continua. El resultado será menos dependencia de IAs externas para decisiones clave, mayor precisión en la identificación de valor y una rentabilidad más estable.

@@ -1,6 +1,9 @@
 import math
 
 
+_EMPIRICAL_PROFILE_CACHE = {"rows": None}
+
+
 def _to_float(value, default=None):
     try:
         if value is None or str(value).strip() == "":
@@ -125,14 +128,31 @@ def _forma_ponderada(resultados):
     return round(indice, 2)
 
 
-def _lambda_base(home, away):
-    gf_local = _to_float(home.get("goles_favor"), 0.0) or 0.0
-    gc_local = _to_float(home.get("goles_contra"), 0.0) or 0.0
-    gf_visit = _to_float(away.get("goles_favor"), 0.0) or 0.0
-    gc_visit = _to_float(away.get("goles_contra"), 0.0) or 0.0
-    lambda_local = ((gf_local + gc_visit) / 2.0) * 1.10 if (gf_local or gc_visit) else 0.0
-    lambda_visit = ((gf_visit + gc_local) / 2.0) if (gf_visit or gc_local) else 0.0
-    return round(lambda_local, 3), round(lambda_visit, 3)
+def _lambda_base(home, away, league_stats=None):
+    # Promedios globales de referencia si no hay datos de liga
+    avg_h = 1.45
+    avg_a = 1.15
+    if league_stats:
+        avg_h = _to_float(league_stats.get("avg_home_goals"), 1.45)
+        avg_a = _to_float(league_stats.get("avg_away_goals"), 1.15)
+        
+    gf_local = _to_float(home.get("goles_favor"), avg_h)
+    gc_local = _to_float(home.get("goles_contra"), avg_a)
+    gf_visit = _to_float(away.get("goles_favor"), avg_a)
+    gc_visit = _to_float(away.get("goles_contra"), avg_h)
+    
+    # Attack Strength = Goles a favor / Promedio
+    att_h = _safe_div(gf_local, avg_h, 1.0)
+    att_a = _safe_div(gf_visit, avg_a, 1.0)
+    
+    # Defense Strength = Goles en contra / Promedio
+    def_h = _safe_div(gc_local, avg_a, 1.0)
+    def_a = _safe_div(gc_visit, avg_h, 1.0)
+    
+    lambda_local = att_h * def_a * avg_h
+    lambda_visitante = att_a * def_h * avg_a
+    
+    return round(lambda_local, 3), round(lambda_visitante, 3)
 
 
 def _elo_probability(elo_local, elo_visitante):
@@ -204,6 +224,25 @@ def _extract_totals_odds(odds_data, line="2.5"):
     return values
 
 
+def _extract_corners_odds(odds_data, line="9.5"):
+    market = _find_odds_market(odds_data, "Corners")
+    if not market:
+        market = _find_odds_market(odds_data, "Corners Over/Under")
+    if not market:
+        return {}
+    values = {}
+    for item in market.get("valores", []):
+        label = str(item.get("value", "")).strip().lower()
+        odd = _to_float(item.get("odd"))
+        if odd is None:
+            continue
+        if f"over {line}" in label or f"más de {line}" in label:
+            values["over"] = odd
+        elif f"under {line}" in label or f"menos de {line}" in label:
+            values["under"] = odd
+    return values
+
+
 def _extract_btts_odds(odds_data):
     market = _find_odds_market(odds_data, "BTTS")
     if not market:
@@ -266,6 +305,7 @@ def _build_candidates(base_probs, odds_data):
     odds_1x2 = _extract_1x2_odds(odds_data)
     odds_totals = _extract_totals_odds(odds_data)
     odds_btts = _extract_btts_odds(odds_data)
+    odds_corners = _extract_corners_odds(odds_data, line="9.5")
     candidates = []
 
     market_map = [
@@ -276,6 +316,8 @@ def _build_candidates(base_probs, odds_data):
         ("Over/Under", "Under 2.5", "under25", base_probs.get("p_under25"), odds_totals.get("under")),
         ("BTTS", "BTTS Si", "btts_si", base_probs.get("p_btts"), odds_btts.get("si")),
         ("BTTS", "BTTS No", "btts_no", base_probs.get("p_no_btts"), odds_btts.get("no")),
+        ("Corners", "Over 9.5 Corners", "over95_corners", base_probs.get("p_over95_corners"), odds_corners.get("over")),
+        ("Corners", "Under 9.5 Corners", "under95_corners", base_probs.get("p_under95_corners"), odds_corners.get("under")),
     ]
     for mercado, seleccion, key, prob, odd in market_map:
         if prob is None or odd is None:
@@ -297,6 +339,214 @@ def _build_candidates(base_probs, odds_data):
     return candidates
 
 
+def _odds_bucket(odd):
+    odd = _to_float(odd)
+    if odd is None:
+        return "sin_cuota"
+    if odd < 1.80:
+        return "favorito_fuerte"
+    if odd < 2.40:
+        return "favorito_medio"
+    if odd < 3.20:
+        return "parejo"
+    if odd < 4.50:
+        return "cuota_alta"
+    return "longshot"
+
+
+def _outcome_score(resultado):
+    resultado = str(resultado or "").strip().lower()
+    if resultado == "ganada":
+        return 1.0
+    if resultado == "media":
+        return 0.5
+    if resultado == "perdida":
+        return 0.0
+    return None
+
+
+def _load_empirical_rows():
+    cached = _EMPIRICAL_PROFILE_CACHE.get("rows")
+    if cached is not None:
+        return cached
+    try:
+        from database import get_all_picks
+
+        df = get_all_picks(incluir_alternativas=True)
+        if df is None or getattr(df, "empty", True):
+            _EMPIRICAL_PROFILE_CACHE["rows"] = []
+            return []
+
+        rows = []
+        for _, row in df.iterrows():
+            if str(row.get("ia", "")) != "Motor-Propio":
+                continue
+            if str(row.get("tipo_pick", "")) != "principal":
+                continue
+            resultado = _outcome_score(row.get("resultado"))
+            if resultado is None:
+                continue
+            cuota = _to_float(row.get("cuota"))
+            if cuota is None:
+                continue
+            mercado = str(row.get("mercado", "") or "Sin mercado")
+            rows.append(
+                {
+                    "mercado": mercado,
+                    "cuota": cuota,
+                    "bucket": _odds_bucket(cuota),
+                    "resultado_score": resultado,
+                    "prob_imp": _implied_probability(cuota),
+                    "ganancia": _to_float(row.get("ganancia"), 0.0) or 0.0,
+                    "stake": _to_float(row.get("stake"), 0.0) or 0.0,
+                }
+            )
+        _EMPIRICAL_PROFILE_CACHE["rows"] = rows
+        return rows
+    except Exception:
+        _EMPIRICAL_PROFILE_CACHE["rows"] = []
+        return []
+
+
+def _empirical_market_adjustment(candidate):
+    rows = _load_empirical_rows()
+    mercado = str(candidate.get("mercado", "") or "Sin mercado")
+    bucket = _odds_bucket(candidate.get("cuota"))
+    same_bucket = [r for r in rows if r["mercado"] == mercado and r["bucket"] == bucket]
+    same_market = [r for r in rows if r["mercado"] == mercado]
+
+    sample = same_bucket if len(same_bucket) >= 6 else same_market
+    sample_size = len(sample)
+    if sample_size < 6:
+        return {
+            "empirical_adjustment": 0.0,
+            "empirical_edge": None,
+            "empirical_roi": None,
+            "empirical_sample": sample_size,
+            "empirical_scope": "insuficiente",
+            "notas": [],
+        }
+
+    hit_rate = _safe_div(sum(r["resultado_score"] for r in sample), sample_size, 0.0)
+    avg_imp = _safe_div(sum(r["prob_imp"] for r in sample if r["prob_imp"] is not None), sample_size, 0.0)
+    total_stake = sum(r["stake"] for r in sample)
+    roi = _safe_div(sum(r["ganancia"] for r in sample), total_stake, 0.0) if total_stake else 0.0
+    empirical_edge = hit_rate - avg_imp
+
+    adjustment = 0.0
+    notas = []
+    if empirical_edge < -0.03:
+        adjustment -= min(0.08, abs(empirical_edge) * 0.7)
+        notas.append("mercado_sobreestima_historicamente")
+    elif empirical_edge > 0.04 and sample_size >= 10:
+        adjustment += min(0.03, empirical_edge * 0.35)
+        notas.append("mercado_responde_bien_historicamente")
+
+    if roi < -0.08 and sample_size >= 8:
+        adjustment -= min(0.05, abs(roi) * 0.3)
+        notas.append("roi_negativo_historico")
+    elif roi > 0.10 and sample_size >= 10:
+        adjustment += min(0.02, roi * 0.15)
+        notas.append("roi_positivo_historico")
+
+    return {
+        "empirical_adjustment": round(adjustment, 4),
+        "empirical_edge": round(empirical_edge, 4),
+        "empirical_roi": round(roi, 4),
+        "empirical_sample": sample_size,
+        "empirical_scope": "bucket" if sample is same_bucket else "mercado",
+        "notas": notas,
+    }
+
+
+def _market_calibration(candidate, favorite_signal, quality_info):
+    prob_model = _to_float(candidate.get("prob_modelo"))
+    prob_market = _to_float(candidate.get("prob_implicita"))
+    cuota = _to_float(candidate.get("cuota"))
+    if prob_model is None or prob_market is None or cuota is None:
+        return {
+            "prob_calibrada": prob_model,
+            "ev_calibrado": candidate.get("ev"),
+            "shrink_factor": 0.0,
+            "ajuste": 0.0,
+            "bucket_cuota": _odds_bucket(cuota),
+            "notas": [],
+        }
+
+    mercado = str(candidate.get("mercado", ""))
+    key = str(candidate.get("key", ""))
+    bucket = _odds_bucket(cuota)
+    notas = []
+
+    # Base de shrinkage hacia mercado segun eficiencia esperada del mercado.
+    if mercado == "1X2":
+        shrink = 0.10
+    elif mercado == "Over/Under":
+        shrink = 0.08
+    elif mercado == "BTTS":
+        shrink = 0.07
+    else:
+        shrink = 0.08
+
+    # Cuotas largas necesitan mas prudencia; aqui suele vivir el value falso.
+    if bucket == "cuota_alta":
+        shrink += 0.06
+        notas.append("cuota_alta")
+    elif bucket == "longshot":
+        shrink += 0.12
+        notas.append("longshot")
+    elif bucket == "favorito_fuerte":
+        shrink += 0.01
+
+    # Castigo extra si vamos contra un favorito estructural claro.
+    dominante = str((favorite_signal or {}).get("dominante", "equilibrado"))
+    if key == "visitante" and dominante == "local":
+        shrink += 0.08 if bucket == "longshot" else 0.04
+        notas.append("contra_favorito_estructural")
+    elif key == "local" and dominante == "visitante":
+        shrink += 0.08 if bucket == "longshot" else 0.04
+        notas.append("contra_favorito_estructural")
+    elif key == "empate" and bucket in {"cuota_alta", "longshot"}:
+        shrink += 0.03
+        notas.append("empate_precio_alto")
+
+    # Si la calidad de input es buena, soltamos un poco el shrink.
+    quality_score = _to_float((quality_info or {}).get("score"), 0.0) or 0.0
+    if quality_score >= 90:
+        shrink -= 0.03
+        notas.append("input_alta_calidad")
+    elif quality_score >= 75:
+        shrink -= 0.015
+
+    # No dejar que el ajuste sea ni ingenuo ni paralizante.
+    shrink = _clamp(shrink, 0.03, 0.28)
+    prob_calibrada = _clamp((prob_model * (1 - shrink)) + (prob_market * shrink))
+    empirical_meta = _empirical_market_adjustment(candidate)
+    prob_calibrada = _clamp(prob_calibrada + empirical_meta.get("empirical_adjustment", 0.0))
+    ev_calibrado = round((prob_calibrada * cuota) - 1, 4)
+    ajuste = round(prob_calibrada - prob_model, 4)
+    notas.extend(empirical_meta.get("notas", []))
+
+    if ajuste < -0.02:
+        notas.append("shrink_fuerte_hacia_mercado")
+    elif ajuste < 0:
+        notas.append("shrink_suave_hacia_mercado")
+
+    return {
+        "prob_calibrada": round(prob_calibrada, 4),
+        "ev_calibrado": ev_calibrado,
+        "shrink_factor": round(shrink, 4),
+        "ajuste": ajuste,
+        "bucket_cuota": bucket,
+        "notas": notas,
+        "empirical_adjustment": empirical_meta.get("empirical_adjustment", 0.0),
+        "empirical_edge": empirical_meta.get("empirical_edge"),
+        "empirical_roi": empirical_meta.get("empirical_roi"),
+        "empirical_sample": empirical_meta.get("empirical_sample", 0),
+        "empirical_scope": empirical_meta.get("empirical_scope", "insuficiente"),
+    }
+
+
 def _stake_from_rules(sistemas_favor, confianza, ev):
     if sistemas_favor >= 8 and confianza >= 0.85 and ev > 0.08:
         return "3u"
@@ -306,6 +556,8 @@ def _stake_from_rules(sistemas_favor, confianza, ev):
         return "1.5u"
     if sistemas_favor >= 5 and confianza >= 0.65 and ev > 0:
         return "1u"
+    if sistemas_favor >= 4 and confianza >= 0.62 and ev > 0.03:
+        return "0.5u"
     return "NO BET"
 
 
@@ -319,7 +571,56 @@ def _availability_label(value):
     return "listo"
 
 
+def _referee_cards_signal(manual_data):
+    avg_cards = _to_float(manual_data.get("promedio_tarjetas_arbitro"))
+    if avg_cards is None:
+        return {
+            "disponible": False,
+            "promedio": None,
+            "perfil": "sin_dato",
+            "sesgo_over": 0.0,
+            "sesgo_under": 0.0,
+            "sesgo_btts_si": 0.0,
+            "sesgo_btts_no": 0.0,
+            "resumen": "",
+        }
+
+    if avg_cards >= 5.2:
+        perfil = "tarjetero"
+        resumen = "Arbitro muy tarjetero; el partido puede romperse por tension y faltas."
+        sesgo_over = 0.05
+        sesgo_under = -0.03
+        sesgo_btts_si = 0.02
+        sesgo_btts_no = -0.01
+    elif avg_cards <= 3.0:
+        perfil = "permisivo"
+        resumen = "Arbitro permisivo; el juego puede tener menos interrupciones."
+        sesgo_over = 0.02
+        sesgo_under = -0.01
+        sesgo_btts_si = 0.01
+        sesgo_btts_no = 0.02
+    else:
+        perfil = "normal"
+        resumen = "Arbitro de perfil neutro en tarjetas."
+        sesgo_over = 0.0
+        sesgo_under = 0.0
+        sesgo_btts_si = 0.0
+        sesgo_btts_no = 0.0
+
+    return {
+        "disponible": True,
+        "promedio": round(avg_cards, 2),
+        "perfil": perfil,
+        "sesgo_over": sesgo_over,
+        "sesgo_under": sesgo_under,
+        "sesgo_btts_si": sesgo_btts_si,
+        "sesgo_btts_no": sesgo_btts_no,
+        "resumen": resumen,
+    }
+
+
 def _input_quality_score(home, away, manual_data, odds_data, context_info):
+    referee_signal = _referee_cards_signal(manual_data)
     bloques = {
         "goles_base": 18 if all(_availability_label(v) == "listo" for v in [home.get("goles_favor"), away.get("goles_favor"), home.get("goles_contra"), away.get("goles_contra")]) else 0,
         "forma": 14 if all(_availability_label(v) == "listo" for v in [home.get("forma"), away.get("forma")]) else 0,
@@ -329,6 +630,7 @@ def _input_quality_score(home, away, manual_data, odds_data, context_info):
         "stats_sec": 10 if any(_availability_label(v) == "listo" for v in [home.get("shots_on_goal"), away.get("shots_on_goal"), home.get("corners"), away.get("corners")]) else 0,
         "tabla": 8 if any(_availability_label((side.get("tabla") or {}).get("pos")) == "listo" for side in [home, away]) else 0,
         "contexto": 6 if (_availability_label(manual_data.get("contexto_libre")) == "listo" or context_info.get("confianza_contexto")) else 0,
+        "arbitro": 4 if referee_signal.get("disponible") else 0,
     }
     score = sum(bloques.values())
     if score >= 80:
@@ -337,13 +639,14 @@ def _input_quality_score(home, away, manual_data, odds_data, context_info):
         nivel = "media"
     else:
         nivel = "baja"
-    return {"score": score, "nivel": nivel, "bloques": bloques}
+    return {"score": score, "nivel": nivel, "bloques": bloques, "arbitro": referee_signal}
 
 
-def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante):
+def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante, referee_signal=None, elo_prob=None, forma_diff=0.0):
     key = candidate["key"]
     score = 0.0
     motivos = []
+    referee_signal = referee_signal or {}
 
     shots_local = _to_float(home.get("shots_on_goal"), 0.0) or 0.0
     shots_visit = _to_float(away.get("shots_on_goal"), 0.0) or 0.0
@@ -356,19 +659,37 @@ def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante
         if lambda_local > lambda_visitante + 0.35:
             score += 0.18
             motivos.append("ventaja clara en gol esperado")
+        elif lambda_local > lambda_visitante + 0.08:
+            score += 0.08
+            motivos.append("ligera ventaja en gol esperado")
         if shots_local > shots_visit + 1:
             score += 0.08
             motivos.append("mejor volumen ofensivo local")
         if pos_local > pos_visit + 6:
             score += 0.04
             motivos.append("mayor control del partido")
+        if elo_prob is not None and elo_prob >= 0.57:
+            score += 0.08
+            motivos.append("ELO favorece al local")
+        if forma_diff >= 0.25:
+            score += 0.06
+            motivos.append("forma reciente favorece al local")
     elif key == "visitante":
         if lambda_visitante > lambda_local + 0.20:
             score += 0.16
             motivos.append("visita con mejor produccion esperada")
+        elif lambda_visitante > lambda_local + 0.05:
+            score += 0.07
+            motivos.append("visita con ligera ventaja esperada")
         if shots_visit > shots_local + 1:
             score += 0.08
             motivos.append("visita con mejor volumen ofensivo")
+        if elo_prob is not None and elo_prob <= 0.48:
+            score += 0.08
+            motivos.append("ELO favorece a la visita")
+        if forma_diff <= -0.25:
+            score += 0.06
+            motivos.append("forma reciente favorece a la visita")
     elif key == "over25":
         total_lambda = lambda_local + lambda_visitante
         if total_lambda >= 2.8:
@@ -380,6 +701,9 @@ def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante
         if (corners_local + corners_visit) >= 9:
             score += 0.04
             motivos.append("ritmo ofensivo aceptable")
+        if referee_signal.get("sesgo_over", 0) > 0:
+            score += referee_signal["sesgo_over"]
+            motivos.append(f"perfil arbitral {referee_signal.get('perfil')}")
     elif key == "under25":
         total_lambda = lambda_local + lambda_visitante
         if total_lambda <= 2.15:
@@ -388,6 +712,9 @@ def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante
         if (shots_local + shots_visit) <= 6 and (shots_local + shots_visit) > 0:
             score += 0.08
             motivos.append("poco volumen de remate")
+        if referee_signal.get("sesgo_under", 0) > 0:
+            score += referee_signal["sesgo_under"]
+            motivos.append(f"perfil arbitral {referee_signal.get('perfil')}")
     elif key == "btts_si":
         if lambda_local >= 1.15 and lambda_visitante >= 0.95:
             score += 0.15
@@ -395,6 +722,9 @@ def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante
         if shots_local >= 3 and shots_visit >= 3:
             score += 0.08
             motivos.append("ambos generan remate al arco")
+        if referee_signal.get("sesgo_btts_si", 0) > 0:
+            score += referee_signal["sesgo_btts_si"]
+            motivos.append(f"perfil arbitral {referee_signal.get('perfil')}")
     elif key == "btts_no":
         if lambda_local < 1.0 or lambda_visitante < 0.8:
             score += 0.14
@@ -402,6 +732,9 @@ def _market_specific_score(candidate, home, away, lambda_local, lambda_visitante
         if min(shots_local, shots_visit) <= 2:
             score += 0.06
             motivos.append("un lado llega con poco volumen")
+        if referee_signal.get("sesgo_btts_no", 0) > 0:
+            score += referee_signal["sesgo_btts_no"]
+            motivos.append(f"perfil arbitral {referee_signal.get('perfil')}")
 
     return round(score, 4), motivos
 
@@ -509,13 +842,14 @@ def _build_input_snapshot(home, away, manual_data, odds_data, context_info):
             "xg_visitante": _availability_label(manual_data.get("xg_visitante")),
             "elo_local": _availability_label(manual_data.get("elo_local")),
             "elo_visitante": _availability_label(manual_data.get("elo_visitante")),
+            "promedio_tarjetas_arbitro": _availability_label(manual_data.get("promedio_tarjetas_arbitro")),
             "contexto_libre": _availability_label(manual_data.get("contexto_libre")),
             "contexto_estructurado": "listo" if manual_data.get("contexto_ollama") else ("listo" if context_info.get("confianza_contexto") else "faltante"),
         },
     }
 
 
-def _build_reasoning_summary(best_candidate, sistemas_a_favor, sistemas_total, confidence, prob_final, ev, context_info, quality_info):
+def _build_reasoning_summary(best_candidate, sistemas_a_favor, sistemas_total, confidence, prob_final, ev, context_info, quality_info, referee_signal):
     if not best_candidate:
         return {
             "decision": "NO BET",
@@ -532,23 +866,47 @@ def _build_reasoning_summary(best_candidate, sistemas_a_favor, sistemas_total, c
         motivos.append(f"EV estimado de {ev:.1%}")
     if context_info.get("resumen"):
         motivos.append(f"Contexto: {context_info['resumen']}")
+    if referee_signal.get("disponible") and referee_signal.get("resumen"):
+        motivos.append(f"Arbitro: {referee_signal['resumen']}")
     if best_candidate and best_candidate.get("market_fit_reasons"):
         motivos.append("Perfil mercado: " + ", ".join(best_candidate.get("market_fit_reasons", [])[:3]))
 
     bloqueos = []
     if ev <= 0:
         bloqueos.append("EV no positivo")
-    if confidence < 0.65:
+    if confidence < 0.62:
         bloqueos.append("confianza por debajo del umbral")
-    if sistemas_a_favor < 5:
-        bloqueos.append("menos de 5 sistemas a favor")
+    soporte_msg = "menos de 5 sistemas a favor"
+    if (
+        quality_info.get("score", 0) >= 85
+        and confidence >= 0.62
+        and best_candidate.get("market_fit_score", 0) >= 0.18
+        and best_candidate.get("guardrail_penalty", 0) < 0.12
+        and ev > 0.03
+    ):
+        soporte_msg = "menos de 4 sistemas a favor"
+    if (soporte_msg == "menos de 5 sistemas a favor" and sistemas_a_favor < 5) or (soporte_msg == "menos de 4 sistemas a favor" and sistemas_a_favor < 4):
+        bloqueos.append(soporte_msg)
     if quality_info.get("score", 0) < 55:
         bloqueos.append("calidad de input insuficiente")
-    if best_candidate and best_candidate.get("market_fit_score", 0) < 0.10:
+    if best_candidate and best_candidate.get("market_fit_score", 0) < 0.08:
         bloqueos.append("mercado sin confirmacion especifica suficiente")
 
     return {
-        "decision": "PICK" if (ev > 0 and confidence >= 0.65 and sistemas_a_favor >= 5) else "NO BET",
+        "decision": "PICK" if (
+            ev > 0
+            and confidence >= 0.62
+            and (
+                sistemas_a_favor >= 5
+                or (
+                    sistemas_a_favor >= 4
+                    and quality_info.get("score", 0) >= 85
+                    and best_candidate.get("market_fit_score", 0) >= 0.18
+                    and best_candidate.get("guardrail_penalty", 0) < 0.12
+                    and ev > 0.03
+                )
+            )
+        ) else "NO BET",
         "motivos_clave": motivos,
         "bloqueos": bloqueos,
     }
@@ -599,7 +957,7 @@ def _context_adjustment(contexto_texto):
     }
 
 
-def _candidate_support(candidate, poisson_probs, dc_probs, elo_prob, forma_diff, xg_adj_local, xg_adj_visit, odds_data, home, away, lambda_local, lambda_visitante):
+def _candidate_support(candidate, poisson_probs, dc_probs, elo_prob, forma_diff, xg_adj_local, xg_adj_visit, odds_data, home, away, lambda_local, lambda_visitante, referee_signal=None):
     target_key = candidate["key"]
     target_prob = candidate["prob_modelo"]
     target_imp = candidate["prob_implicita"]
@@ -709,7 +1067,16 @@ def _candidate_support(candidate, poisson_probs, dc_probs, elo_prob, forma_diff,
     }
     apoyos = sum(1 for v in systems.values() if v == "apoya")
     neutrales = sum(1 for v in systems.values() if v == "neutral")
-    market_fit_score, market_fit_reasons = _market_specific_score(candidate, home, away, lambda_local, lambda_visitante)
+    market_fit_score, market_fit_reasons = _market_specific_score(
+        candidate,
+        home,
+        away,
+        lambda_local,
+        lambda_visitante,
+        referee_signal=referee_signal,
+        elo_prob=elo_prob,
+        forma_diff=forma_diff,
+    )
     return systems, apoyos, neutrales, {
         "dixon_target": dixon_target,
         "fair_line": fair_line,
@@ -726,10 +1093,19 @@ def analizar_partido_motor(datos_partido, manual_data=None):
     home = (datos_partido or {}).get("home", {})
     away = (datos_partido or {}).get("away", {})
     odds_data = (datos_partido or {}).get("odds", {})
+    league_stats = (datos_partido or {}).get("league_stats", {})
 
-    lambda_local, lambda_visitante = _lambda_base(home, away)
+    lambda_local, lambda_visitante = _lambda_base(home, away, league_stats)
     poisson_matrix = _score_matrix(lambda_local, lambda_visitante)
     poisson_probs = _matrix_market_probs(poisson_matrix)
+
+    # Corners Baseline Model (Poisson Sum)
+    c_local = _to_float(home.get("corners"), 5.5) or 5.5
+    c_visit = _to_float(away.get("corners"), 4.5) or 4.5
+    total_c_lambda = c_local + c_visit
+    p_under_c = sum(_poisson_pmf(k, total_c_lambda) for k in range(10)) # under 9.5
+    poisson_probs["p_over95_corners"] = round(1 - p_under_c, 4)
+    poisson_probs["p_under95_corners"] = round(p_under_c, 4)
 
     dc_matrix = _dixon_coles_matrix(lambda_local, lambda_visitante, rho=-0.13)
     dc_probs = _matrix_market_probs(dc_matrix)
@@ -747,42 +1123,68 @@ def analizar_partido_motor(datos_partido, manual_data=None):
     forma_visitante = _forma_ponderada(away.get("forma", []))
     forma_diff = round(forma_local - forma_visitante, 2)
     context_info = manual_data.get("contexto_ollama") or _context_adjustment(manual_data.get("contexto_libre"))
+    referee_signal = _referee_cards_signal(manual_data)
     quality_info = _input_quality_score(home, away, manual_data, odds_data, context_info)
     favorite_signal = _favorite_structure_signal(poisson_probs, elo_prob, forma_diff)
+
+    from core.motor.weights import get_system_weights
+    sys_weights = get_system_weights()
 
     candidates = _build_candidates(poisson_probs, odds_data)
     evaluated_candidates = []
     for candidate in candidates:
         systems_candidate, apoyos, neutrales, meta = _candidate_support(
-            candidate, poisson_probs, dc_probs, elo_prob, forma_diff, xg_adj_local, xg_adj_visit, odds_data, home, away, lambda_local, lambda_visitante
+            candidate, poisson_probs, dc_probs, elo_prob, forma_diff, xg_adj_local, xg_adj_visit, odds_data, home, away, lambda_local, lambda_visitante, referee_signal
         )
         candidate_copy = dict(candidate)
+        candidate_copy["prob_modelo_bruto"] = candidate_copy.get("prob_modelo")
+        candidate_copy["ev_bruto"] = candidate_copy.get("ev")
         candidate_copy["systems"] = systems_candidate
         candidate_copy["sistemas_a_favor"] = apoyos
         candidate_copy["sistemas_neutrales"] = neutrales
         candidate_copy.update(meta)
+        calibration_meta = _market_calibration(candidate_copy, favorite_signal, quality_info)
+        candidate_copy.update(calibration_meta)
         guardrail_penalty, guardrail_alerts = _candidate_guardrails(candidate_copy, favorite_signal, elo_prob, forma_diff)
         candidate_copy["guardrail_penalty"] = guardrail_penalty
         candidate_copy["guardrail_alerts"] = guardrail_alerts
+
+        # CALCULO DE PESOS PONDERADOS
+        # En vez de (apoyos * 0.09) que da maximo 0.63, sumamos los pesos normalizados
+        weighted_support = sum(sys_weights.get(sys, 0.1) for sys, veredicto in systems_candidate.items() if veredicto == "apoya")
+        weighted_neutrales = sum(sys_weights.get(sys, 0.1) for sys, veredicto in systems_candidate.items() if veredicto == "neutral")
+        
+        # Max weighted_support = 1.0 -> lo escalamos a 0.63 (como 7 apoyos * 0.09)
+        score_support_term = weighted_support * 0.63
+        score_neutral_term = weighted_neutrales * 0.07
+
+        candidate_copy["weighted_support"] = round(weighted_support, 3)
         candidate_copy["score_candidato"] = round(
-            (candidate_copy["ev"] * 3.2)
-            + (candidate_copy["prob_modelo"] * 0.8)
-            + (apoyos * 0.09)
+            (candidate_copy.get("ev_calibrado", candidate_copy["ev"]) * 3.2)
+            + (candidate_copy.get("prob_calibrada", candidate_copy["prob_modelo"]) * 0.8)
+            + score_support_term
             + (candidate_copy.get("market_fit_score", 0) * 0.75)
-            + (neutrales * 0.01),
+            + score_neutral_term,
             4,
         )
         candidate_copy["score_ajustado"] = round(candidate_copy["score_candidato"] - guardrail_penalty, 4)
         evaluated_candidates.append(candidate_copy)
 
+
     evaluated_candidates.sort(
-        key=lambda x: (x["sistemas_a_favor"], x["score_ajustado"], x["ev"], x["prob_modelo"]),
+        key=lambda x: (
+            x["sistemas_a_favor"],
+            x["score_ajustado"],
+            x.get("ev_calibrado", x["ev"]),
+            x.get("prob_calibrada", x["prob_modelo"]),
+        ),
         reverse=True,
     )
     best_candidate = evaluated_candidates[0] if evaluated_candidates else None
 
     target_key = best_candidate["key"] if best_candidate else None
-    target_prob = best_candidate["prob_modelo"] if best_candidate else None
+    target_prob = best_candidate.get("prob_calibrada", best_candidate["prob_modelo"]) if best_candidate else None
+    target_prob_raw = best_candidate["prob_modelo"] if best_candidate else None
     prob_imp = best_candidate["prob_implicita"] if best_candidate else None
     p_pinnacle = best_candidate.get("p_pinnacle") if best_candidate else None
     dixon_target = best_candidate.get("dixon_target") if best_candidate else None
@@ -853,11 +1255,31 @@ def analizar_partido_motor(datos_partido, manual_data=None):
             "diferencia": round((target_prob - p_pinnacle), 4) if target_prob is not None and p_pinnacle is not None else None,
             "veredicto": mercado_eficiente_veredicto,
         },
+        "calibracion_mercado": {
+            "prob_modelo_bruta": round(target_prob_raw, 4) if target_prob_raw is not None else None,
+            "prob_modelo_calibrada": round(target_prob, 4) if target_prob is not None else None,
+            "shrink_factor": round(best_candidate.get("shrink_factor", 0), 4) if best_candidate else None,
+            "bucket_cuota": best_candidate.get("bucket_cuota") if best_candidate else None,
+            "ajuste": round(best_candidate.get("ajuste", 0), 4) if best_candidate else None,
+            "empirical_adjustment": round(best_candidate.get("empirical_adjustment", 0), 4) if best_candidate else None,
+            "empirical_edge": best_candidate.get("empirical_edge") if best_candidate else None,
+            "empirical_roi": best_candidate.get("empirical_roi") if best_candidate else None,
+            "empirical_sample": best_candidate.get("empirical_sample") if best_candidate else None,
+            "empirical_scope": best_candidate.get("empirical_scope") if best_candidate else None,
+            "notas": best_candidate.get("notas", []) if best_candidate else [],
+            "veredicto": "apoya" if best_candidate and abs(best_candidate.get("ajuste", 0)) <= 0.02 else "neutral",
+        },
         "contexto_reglado": {
             "ajuste_total": context_info["ajuste_total"],
             "confianza_contexto": context_info["confianza_contexto"],
             "resumen": context_info["resumen"],
             "veredicto": "apoya" if context_info["ajuste_total"] > 0.01 else ("no_apoya" if context_info["ajuste_total"] < -0.01 else "neutral"),
+        },
+        "arbitro_tarjetas": {
+            "promedio_tarjetas": referee_signal.get("promedio"),
+            "perfil": referee_signal.get("perfil"),
+            "resumen": referee_signal.get("resumen"),
+            "veredicto": "apoya" if referee_signal.get("disponible") else "no_disponible",
         },
     }
 
@@ -909,6 +1331,7 @@ def analizar_partido_motor(datos_partido, manual_data=None):
         confidence_components.append(context_info["confianza_contexto"] * 0.35)
     if best_candidate:
         confidence_components.append(min(0.18, best_candidate.get("market_fit_score", 0)))
+        confidence_components.append(min(0.12, max(0.0, best_candidate.get("ev", 0)) * 0.25))
     confidence = round(sum(confidence_components) / max(1, len(confidence_components)), 2)
     quality_factor = 0.82 if quality_info["nivel"] == "baja" else (0.92 if quality_info["nivel"] == "media" else 1.0)
     confidence = round(_clamp(confidence * quality_factor), 2)
@@ -920,9 +1343,11 @@ def analizar_partido_motor(datos_partido, manual_data=None):
             datos_insuficientes.append(nombre)
     if datos_insuficientes:
         riesgos.append("Hay sistemas no disponibles por datos faltantes.")
-    if best_candidate and best_candidate["ev"] <= 0:
+    if best_candidate and best_candidate.get("ev_calibrado", best_candidate["ev"]) <= 0:
         riesgos.append("El valor esperado no supera 0.")
-    if confidence < 0.65:
+    if best_candidate and best_candidate.get("ajuste", 0) <= -0.03:
+        riesgos.append("La calibracion de mercado recorto bastante la probabilidad; cuidado con edge posiblemente inflado.")
+    if confidence < 0.62:
         riesgos.append("La confianza agregada sigue por debajo del umbral operativo.")
     if best_candidate and best_candidate["mercado"] != "1X2" and best_candidate["sistemas_a_favor"] < 5:
         riesgos.append("El mercado secundario no tiene apoyo suficiente.")
@@ -930,18 +1355,33 @@ def analizar_partido_motor(datos_partido, manual_data=None):
         riesgos.append("La calidad del input es baja; el motor penalizo la confianza.")
     elif quality_info["nivel"] == "media":
         riesgos.append("La calidad del input es intermedia; conviene revisar antes de publicar.")
-    if best_candidate and best_candidate.get("market_fit_score", 0) < 0.12:
+    if not referee_signal.get("disponible"):
+        riesgos.append("Falta el promedio de tarjetas del arbitro; se pierde una senal util de tension del partido.")
+    if best_candidate and best_candidate.get("market_fit_score", 0) < 0.10:
         riesgos.append("El mercado elegido no tiene suficiente confirmacion especifica por perfil de juego.")
+    if best_candidate and best_candidate.get("bucket_cuota") == "longshot" and best_candidate.get("ajuste", 0) < 0:
+        riesgos.append("Es una cuota larga y fue castigada por calibracion hacia mercado.")
     if best_candidate and best_candidate.get("guardrail_alerts"):
         riesgos.extend(best_candidate.get("guardrail_alerts", []))
 
+    soporte_minimo = 5
+    if (
+        best_candidate
+        and quality_info["score"] >= 85
+        and confidence >= 0.62
+        and best_candidate.get("market_fit_score", 0) >= 0.18
+        and best_candidate.get("guardrail_penalty", 0) < 0.12
+        and ev > 0.03
+    ):
+        soporte_minimo = 4
+
     emitido = bool(
         best_candidate
-        and sistemas_a_favor >= 5
-        and confidence >= 0.65
+        and sistemas_a_favor >= soporte_minimo
+        and confidence >= 0.62
         and ev > 0
         and quality_info["score"] >= 55
-        and best_candidate.get("market_fit_score", 0) >= 0.10
+        and best_candidate.get("market_fit_score", 0) >= 0.08
         and best_candidate.get("guardrail_penalty", 0) < 0.25
     )
     stake = _stake_from_rules(sistemas_a_favor, confidence, ev)
@@ -966,6 +1406,7 @@ def analizar_partido_motor(datos_partido, manual_data=None):
         ev,
         context_info,
         quality_info,
+        referee_signal,
     )
 
     return {

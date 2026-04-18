@@ -1,1 +1,45 @@
-.env 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Entornos
+venv/
+env/
+.venv/
+
+# Bases de datos
+*.db
+*.sqlite
+*.sqlite3
+
+# Entorno
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log
+.pytest_cache/
+
+# Datos operativos
+cuotas/
+veredictos/
+comparativa_espejo.json
+pesos_ia.json
+veredicto_final.json
+
+# Resultados
+*.pdf
+output/
+export/
+
+# OS
+.DS_Store
+Thumbs.db

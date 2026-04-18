@@ -1,0 +1,214 @@
+Auditoría Técnica — Motor de Picks JrAI11_V2
+Voy directo. Sin relleno.
+
+A. Diagnóstico Crítico
+Lo que está bien:
+La arquitectura multicapa es correcta en su filosofía. Usar Poisson + Dixon-Coles como base probabilística, ajustar con ELO/xG, y filtrar con lógica de mercado eficiente es el esquema estándar de los modelos serios. El hecho de que tengas guardrails y calidad del input como variable de confianza es madurez real —muchos sistemas comerciales no lo hacen.
+Lo que está mal o incompleto:
+El problema central del motor no es matemático. Es epistemológico: el motor no sabe qué tan confiables son sus propios inputs en cada partido. Mezcla datos duros (Poisson con estadísticas reales) con datos blandos (ELO manual, xG manual) sin ponderar su incertidumbre de forma diferenciada. Cuando el ELO y el xG son manuales, son proxies de tu intuición, no del modelo. Eso contamina toda la cadena.
+Piezas débiles específicas:
+
+ELO manual: un ELO que no se actualiza automáticamente con resultados es una foto fija. Pierde sentido rápido. En el mejor caso es un prior razonable; en el peor, introduce sesgo confirmatorio.
+xG manual: mismo problema. Si introduces xG desde memoria o fuentes inconsistentes, el Dixon-Coles está ajustando probabilidades sobre una base que no es confiable. Esto puede ser peor que no tener xG.
+Forma ponderada: si es una media simple o exponencial de resultados recientes, ignora el contexto del resultado (ganar 1-0 con 7 de xG vs. 0.3 de xG es muy distinto). La forma sin calidad del partido es ruido.
+Árbitro: está bien como señal, pero afectando input quality en vez de tener su propio sub-modelo es una solución provisional que debería evolucionar.
+
+Sesgos estructurales:
+
+Sesgo de disponibilidad: los datos que entras manualmente tienden a reflejar partidos con más información accesible, no una muestra representativa.
+Sesgo de confirmación en contexto: Ollama estructura lo que Perplexity trae, pero si el contexto narrativo domina sobre el modelo cuantitativo en la decisión final, el sistema puede racionalizar picks en vez de generarlos.
+El problema del NO BET excesivo: muy probablemente viene de acumulación de penalizaciones independientes que se suman sin un techo claro. Si cada módulo puede bajar la confianza de forma aditiva, el resultado agregado puede colapsar a NO BET aunque cada penalización individual sea marginal.
+
+
+B. Riesgos Cuantitativos
+Sobreajuste potencial:
+El mayor riesgo no es sobreajuste estadístico clásico (el modelo no se entrena sobre datos), sino sobreajuste de diseño: los guardrails y reglas de emisión fueron construidos sobre partidos que ya viste. Si ajustaste los umbrales para que el sistema hubiera dado buenos picks en el pasado reciente, están sobreajustados aunque no uses ML.
+Calibración:
+El Poisson base casi nunca está bien calibrado para mercados extremos (Over 3.5, BTTS en equipos defensivos, resultados exactos). Dixon-Coles mejora la cola baja de goles pero tampoco es perfecto para ligas con pocos datos. Si trabajas principalmente con Liga BetPlay, los parámetros de ataque/defensa del modelo necesitan ser estimados con datos locales, no transplantados de coeficientes europeos.
+Mercados mal tratados actualmente:
+
+Handicap asiático: si la línea justa la calculas desde Poisson directamente, estás ignorando que las casas calibran su handicap con modelos mucho más sofisticados. Tu línea justa puede estar sistemáticamente desviada.
+BTTS: depende mucho de la correlación entre ataque local y defensa visitante. Poisson independiente subestima/sobreestima según la liga.
+Over/Under en partidos con equipos muy asimétricos: Poisson pierde calibración cuando un equipo tiene parámetro de ataque muy alto y el otro muy bajo.
+
+Qué picks debería bloquear mejor:
+
+Picks donde EV > 0 pero el margen es menor que la incertidumbre del modelo (EV positivo pero dentro del rango de error de estimación)
+Picks en mercados donde la calidad del input está por debajo de un umbral pero el EV puntual sigue siendo alto
+Picks donde el modelo y el mercado eficiente discrepan pero la cuota es >3.0 (combinación peligrosa)
+
+
+C. Mejoras de Modelo
+Qué falta y agregarías primero:
+1. Estimación automática de parámetros de ataque/defensa (prioridad alta)
+En vez de xG manual, estima los parámetros de ataque y defensa de cada equipo directamente desde goles marcados/recibidos en la temporada usando máxima verosimilitud. Esto hace el Poisson/Dixon-Coles autocontenido y elimina el xG manual como dependencia. En Python, con scipy.optimize y datos de la API-Football que ya tienes, esto es implementable en menos de 200 líneas.
+python# Esquema básico de estimación
+# Para cada partido i: goles_local ~ Poisson(ataque_local * defensa_visitante * home_advantage)
+# goles_visitante ~ Poisson(ataque_visitante * defensa_local)
+# Maximizar log-verosimilitud sobre todos los partidos de la temporada
+```
+
+**2. ELO automático** (prioridad alta)
+
+Un ELO simple que se actualiza con cada resultado es mejor que un ELO manual estático. El factor K puede ser fijo o adaptativo. Añade home advantage como parámetro fijo (+X puntos de ELO al local). Esto tarda un día en implementarse bien.
+
+**3. Calibración de probabilidades con Platt Scaling o isotonic regression** (prioridad media)
+
+Después de acumular 100+ picks históricos con resultados, puedes calibrar la salida del modelo. Las probabilidades que da Poisson no son probabilidades reales en el sentido frecuentista —necesitan ajuste. Esto es lo que separa un modelo que "suena bien" de uno que funciona.
+
+**4. Correlación goles local-visitante** (prioridad media)
+
+Dixon-Coles introduce un parámetro de correlación (ρ) para corregir los marcadores 0-0 y 1-0. Asegúrate de que lo estás usando. Si no, el BTTS y algunos Over/Under están mal calculados.
+
+**Qué quitarías o simplificarías:**
+
+- El xG manual como input directo al modelo. Reemplázalo con los parámetros estimados automáticamente.
+- El ELO manual si consigues actualización automática.
+- No quitaría el contexto estructurado, pero lo aislaría mejor (ver sección D).
+
+**Mejoras específicas por mercado:**
+
+- **1X2**: la base Poisson + DC es buena. El problema es la calibración. Prioriza eso.
+- **Over/Under**: añade un factor de tempo/estilo de juego si tienes datos de posesión o ritmo de partido. Sin eso, Poisson es tu mejor herramienta.
+- **BTTS**: modélalo como probabilidad independiente P(local > 0) * P(visitante > 0), derivada del Poisson. Es directo. El error está en usar cuotas de BTTS como referencia en vez de tu propia estimación.
+- **Handicap**: calcula la distribución de diferencia de goles (local - visitante) desde tu Poisson y compara con el handicap de línea. Si la casa pone -1.5 y tu modelo da 47% de probabilidad de que gane por 2+, tienes la comparación correcta.
+- **Favoritos vs underdogs**: define un underdog estructural vs. un underdog de cuota. Un equipo puede tener cuota alta porque el mercado lo subestima (oportunidad) o porque realmente es inferior (no oportunidad). Tu ELO + parámetros de modelo deberían poder distinguirlos.
+
+---
+
+## D. Mejoras de Decisión
+
+**El problema del NO BET excesivo — raíz del problema:**
+
+Lo más probable es que tengas múltiples penalizaciones que se aplican de forma aditiva o multiplicativa sin un modelo claro de cómo se combinan. La solución no es bajar umbrales —es rediseñar la lógica de decisión.
+
+**Propuesta: modelo de decisión en dos capas**
+```
+Capa 1 — Filtro duro (binario, bloquea sin excepción):
+  - Calidad de input < umbral_mínimo absoluto → NO BET
+  - EV < 0 → NO BET
+  - Cuota fuera del rango definido → NO BET
+
+Capa 2 — Score compuesto (continuo, decide stake):
+  - score = w1*EV_normalizado + w2*confianza_modelo + w3*soporte_mercado + w4*fit_mercado
+  - Si score > umbral_pick → PICK con stake proporcional al score
+  - Si score < umbral_pick → NO BET
+Los pesos w1..w4 son los que calibras con historial. Esto te da control explícito sobre qué tan agresivo o conservador es el sistema, y puedes ajustarlo por mercado.
+Calibración de stake:
+El criterio de Kelly fraccional (25-33% del Kelly completo) es el estándar. Kelly completo casi nunca se recomienda porque amplifica errores de estimación.
+pythonkelly = (prob_modelo * cuota - 1) / (cuota - 1)
+stake_sugerido = kelly * fraccion  # fraccion = 0.25 típicamente
+stake_sugerido = min(stake_sugerido, stake_maximo)  # techo absoluto
+```
+
+**Cómo evitar picks locos por cuota alta:**
+
+No uses solo la cuota como filtro. Define una zona de cuota-confianza:
+```
+Si cuota > 3.0:
+    confianza_mínima_requerida += 0.15
+    sistemas_mínimos_requeridos += 1
+Si cuota > 5.0:
+    rechazar automáticamente salvo que EV > 15% Y sistemas >= N
+Sobre el contexto (Perplexity → Ollama):
+La arquitectura es razonable pero tiene un riesgo: el contexto puede sobre-escribir señales cuantitativas. Mi propuesta es que el contexto solo pueda hacer dos cosas:
+
+Reducir la confianza (si hay información negativa: lesión clave, sanción, etc.)
+Activar un flag de revisión (contexto contradice al modelo → revisar manualmente antes de publicar)
+
+El contexto no debería poder subir la confianza ni cambiar el mercado recomendado. Así el motor cuantitativo decide y el contexto solo protege.
+
+E. Aprendizaje
+Variables a guardar por pick (esquema mínimo viable):
+python{
+  "pick_id": "uuid",
+  "fecha": "2025-01-15",
+  "partido": "Atlético Nacional vs. América de Cali",
+  "liga": "Liga BetPlay",
+  "mercado": "1X2",
+  "seleccion": "1",
+  "cuota": 1.85,
+  
+  # Salidas del modelo
+  "prob_modelo": 0.61,
+  "prob_implicita_cuota": 0.54,
+  "ev_calculado": 0.128,
+  "kelly_fraccionado": 0.034,
+  "stake_sugerido": 3.4,
+  
+  # Calidad del input
+  "calidad_input": 0.78,
+  "datos_faltantes": ["xG_visitante"],
+  
+  # Componentes individuales
+  "prob_poisson": 0.59,
+  "prob_dc_ajustada": 0.61,
+  "elo_local": 1520,
+  "elo_visitante": 1480,
+  "sistemas_a_favor": 5,
+  "fit_mercado": 0.82,
+  
+  # Contexto
+  "contexto_flag": "lesion_portero_visitante",
+  "ajuste_contexto": -0.05,
+  
+  # Resultado (se llena después)
+  "resultado_real": "1",   # 1, X, 2
+  "pick_correcto": True,
+  "pl_unidades": 0.85
+}
+```
+
+**Métricas a analizar después:**
+
+- **ROI por mercado**: 1X2 vs. O/U vs. BTTS vs. Handicap
+- **ROI por rango de cuota**: 1.3-1.6, 1.6-2.0, 2.0-2.5, 2.5+
+- **ROI por rango de EV**: EV 5-10%, 10-15%, 15%+
+- **Calibración**: grafica prob_modelo vs. frecuencia real de acierto por decil
+- **ROI por calidad de input**: picks con calidad >0.8 vs. <0.8
+- **ROI por número de sistemas a favor**: ≥5 vs. <5
+
+**Módulo de aprendizaje (diseño):**
+
+No empieces con ML. Empieza con **análisis de segmentación**:
+```
+Fase 1 (0-200 picks): Solo guardar y analizar. No ajustar nada.
+Fase 2 (200+ picks): Calcular ROI por segmento. Identificar dónde el modelo gana y dónde pierde.
+Fase 3 (500+ picks): Ajustar pesos del score compuesto con regresión logística simple sobre el historial.
+Fase 4 (1000+ picks): Considerar modelos más complejos (XGBoost sobre features del motor).
+La regresión logística en fase 3 sería algo así:
+python# y = 1 si pick fue correcto, 0 si no
+# X = [ev_calculado, calidad_input, sistemas_a_favor, fit_mercado, log(cuota)]
+from sklearn.linear_model import LogisticRegression
+model = LogisticRegression()
+model.fit(X_historico, y_historico)
+# Los coeficientes te dicen qué variables realmente predicen éxito
+
+F. Roadmap de Implementación
+Ordenado por impacto real vs. esfuerzo:
+Sprint 1 — Fundamentos (1-2 semanas)
+
+Estimación automática de parámetros de ataque/defensa desde datos de API-Football (elimina xG manual)
+ELO automático que se actualiza con resultados reales
+Rediseño de lógica de decisión en dos capas (filtro duro + score compuesto)
+Sistema de logging de picks con el esquema de variables definido arriba
+
+Sprint 2 — Mercados y calibración (2-3 semanas)
+5. Verificar que Dixon-Coles usa el parámetro ρ correctamente
+6. Implementar Kelly fraccional con techo de stake
+7. Zona de cuota-confianza (filtros escalados por cuota)
+8. Aislar el contexto para que solo pueda reducir confianza, no aumentarla
+Sprint 3 — Análisis y retroalimentación (cuando tengas 50+ picks)
+9. Dashboard básico de métricas por segmento (ROI por mercado, cuota, EV)
+10. Gráfica de calibración del modelo
+Sprint 4 — Mejora estructural (cuando tengas 200+ picks)
+11. Calibración de probabilidades con historial real (Platt Scaling)
+12. Sub-modelo de árbitro para mercados de tarjetas
+13. Ajuste de pesos del score compuesto con regresión logística
+Sprint 5 — Automatización
+14. Pipeline automático de ingesta de datos desde API-Football
+15. Reducción de inputs manuales al mínimo absoluto
+
+Conclusión técnica:
+El motor tiene buena filosofía pero está operando con demasiados inputs manuales que contaminan un proceso que debería ser más autónomo. El problema del NO BET excesivo es de diseño de decisión, no de umbrales. Y el riesgo más real no es que el modelo falle matemáticamente —es que los inputs blandos (ELO manual, xG manual, contexto narrativo) estén conduciendo las decisiones sin que sea visible.
+La prioridad es hacer el modelo más autocontenido, su lógica de decisión más explícita, y empezar a registrar picks con suficiente detalle para que el sistema pueda aprender de sí mismo.

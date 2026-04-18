@@ -1,5 +1,88 @@
-.env 
-__pycache__/ 
-*.pyc 
-*.db 
-.env.example 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+ENV/
+
+# Bases de datos
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Archivos de entorno (sensibles)
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Archivos temporales
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Datos operativos - mantener estructura pero no contenido
+output/
+export/
+resultados/
+pick_definitions/
+07_PICKSREALES/
+
+# Data: no ignore para estructura (la app crea BD automáticamente)
+# Ignorar solo archivos específicos si es necesario
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Secrets
+credentials.json
+*.pem
+*.key 

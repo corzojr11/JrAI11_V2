@@ -1,0 +1,808 @@
+Voy a auditarlo como motor cuantitativo de pricing, decisión y aprendizaje, contrastando tu arquitectura con evidencia técnica y señalando dónde se rompe calibración, selección, staking y rentabilidad.
+
+La conclusión fuerte es esta: el cuello de botella no es falta de IA ni de componentes, sino calibración débil, demasiada intervención manual y una mala separación entre modelado y decisión. También hay una mejora concreta: dejar de normalizar cuotas de forma simple y pasar a métodos tipo Shin/power, porque el sesgo favorito-longshot sigue contaminando el value en precios largos.
+
+Además, estás acoplando forecast, contexto, filtro de riesgo y staking en una sola lógica. Y al escanear muchos mercados para elegir “el mejor”, probablemente estés capturando el máximo ruido, no el máximo edge real.
+
+Thought for 16m 59s
+
+Voy a ser directo: por lo que describes, JrAI11_V2 ya es un buen prototipo cuantitativo, pero todavía no es un motor institucional. Lo valioso no es Poisson ni Dixon-Coles; lo valioso es que ya separaste algo de probabilidad, contexto, guardrails y emisión PICK/NO BET. Lo débil no es “falta de IA”; lo débil es que sigues apoyando demasiado la probabilidad en inputs manuales y demasiado la decisión en reglas apiladas.
+
+También te digo esto sin rodeos: sin ver el repo no puedo auditar bugs concretos de implementación, pero sí puedo auditar el diseño del motor con bastante precisión. Y mi diagnóstico central es este: hoy tus mayores pérdidas potenciales vienen más por mala calibración, mala gobernanza de decisión y mala arquitectura de datos que por usar Poisson. La literatura comparativa en fútbol sugiere que muchos modelos score-based top terminan muy cerca entre sí; el salto real suele venir de incorporar mejor dinámica temporal, mercado, jugadores/lineups y calibración, no de seguir apilando variaciones del mismo Poisson. Además, los mercados no son uniformes: el 1X2 tradicional sigue mostrando sesgo favorite–longshot, mientras que Asian handicap puede ser bastante más eficiente; y hay evidencia de que cuotas agregadas pueden estar razonablemente calibradas aunque bookmakers individuales sigan siendo ineficientes frente a la información de sus competidores.
+
+A. Diagnóstico crítico
+Lo que está bien
+
+Ya tienes un motor propio y no dependes de una IA externa para producir la probabilidad base. Eso es correcto.
+
+Tienes NO BET. Eso es obligatorio en un sistema serio.
+
+Intentaste modelar mercado, contexto, calidad del input y guardrails. Esa mezcla es correcta en espíritu.
+
+Tu motor ya entiende que cuota alta no es valor automáticamente. Muchísimos sistemas ni siquiera llegan ahí.
+
+Lo que está mal o incompleto
+
+Tu cuello de botella principal es la manualidad.
+ELO manual, xG manual, contexto manual/semi-manual y señal arbitral manual no son un detalle operativo: son una debilidad estructural. Eso introduce latencia, inconsistencia, riesgo de error humano, potencial leakage y hace imposible aprender a escala. Un motor que aspira a ser “el pick principal” no puede depender de que alguien alimente variables clave a mano.
+
+Tu capa de decisión huele a “rule soup”.
+Tienes EV, sistemas a favor, favorito estructural, fit de mercado, penalización estructural, calidad del input, contexto, árbitro, stake sugerido y guardrails. El problema no es tener muchos componentes; el problema es que, por cómo lo describes, parecen más una suma de vetos y ajustes heurísticos que una política de decisión estadísticamente gobernada. Eso normalmente produce dos fallos simultáneos: demasiados NO BET y, aun así, algunos picks absurdos cuando una regla deja pasar ruido.
+
+Dixon-Coles no te salva si lo conviertes en solución general.
+Sigue siendo útil, pero es un parche local: redistribuye probabilidad básicamente entre 0-0, 1-0, 0-1 y 1-1, y su rango de correlación es limitado. Si tu motor depende demasiado de DC para “arreglar” el score model, estás corrigiendo una familia demasiado rígida con un ajuste demasiado pequeño.
+
+Tu benchmark de mercado es demasiado pobre.
+“Mi probabilidad vs probabilidad implícita en una cuota” no basta. Necesitas distinguir entre:
+
+cuota de book soft vs sharp,
+
+apertura vs cierre,
+
+consenso vs book individual,
+
+mercado 1X2 vs Asian handicap vs totals,
+
+margen bruto vs probabilidad no-vig.
+Si no haces eso, muchas veces no detectas value: detectas margen, shading o ineficiencia local de una casa.
+
+El contexto con Perplexity + Ollama es aceptable como ETL, no como core signal.
+Como arquitectura de transición está bien: Perplexity trae contexto reciente y Ollama lo estructura. Pero eso no debe empujar la probabilidad directamente. Debe generar hechos tipados, con fuente, confianza, vencimiento y efecto cuantificado. Si no, conviertes texto incierto en pseudo-señal cuantitativa.
+
+No veo una capa explícita de calibración.
+Y eso es grave. En apuestas, acertar ranking no alcanza: necesitas que las probabilidades estén calibradas. Hay evidencia fuera de fútbol, pero muy relevante para betting systems, de que para apostar la calibración importa más que la accuracy, y las proper scoring rules sirven precisamente para evaluar calibración y sharpness, no solo acierto bruto.
+
+No veo una capa explícita de incertidumbre.
+Tu sistema parece operar con probabilidades punto. Ese es un error serio. El pick no debería salir por EV medio; debería salir por EV bajo escenario prudente.
+
+B. Riesgos cuantitativos
+Dónde puede estar sobreajustado
+
+En guardrails tuneados a mano sobre experiencias recientes.
+
+En umbrales de emisión definidos mirando resultados realizados.
+
+En “sistemas a favor” si cuentan señales correlacionadas como si fueran evidencias independientes.
+
+En el hecho de que seguramente el motor compara muchos mercados y luego se queda con el de mayor EV: eso genera sesgo de selección del máximo. El mayor edge estimado suele estar inflado por ruido.
+
+Ese último punto es clave: cuando escaneas 1X2, O/U, BTTS, handicaps y varias líneas, el “mejor” edge casi siempre está sobreestimado. Y eso pega especialmente en cuotas altas, porque un pequeño error en probabilidad se amplifica brutalmente en decimal odds.
+
+Dónde puede estar mal calibrado
+
+1X2 underdogs y precios altos.
+El sesgo favorite–longshot en mercados 1X2 tradicionales es real y persistente; si no tienes calibración por bucket de cuota, vas a sobrecomprar perros largos.
+
+BTTS, si lo estás derivando casi solo del mismo score matrix.
+
+Over/Under, si usas márgenes Poisson rígidos en ligas o regímenes con sobre/infra-dispersión.
+
+Handicap, si hoy solo haces “lectura básica de línea justa”. El mercado AH reciente muestra bastante más eficiencia que el 1X2 tradicional, así que ahí una lectura rudimentaria tiene pocas probabilidades de sobrevivir.
+
+Qué mercados están peor tratados hoy
+
+Handicap: porque lo describes como arbitraje/lectura básica, no como modelo propio de goal difference.
+
+BTTS: porque suele quedar mal si depende demasiado del supuesto de independencia o de una correlación mal modelada.
+
+Tarjetas: hoy no tienes modelo; tienes un promedio manual del árbitro maquillado como señal secundaria. Eso no es modelado.
+
+Qué picks deberías bloquear mejor
+
+1X2 underdogs de cuota alta cuyo edge desaparece al:
+
+quitar vigorish,
+
+usar consenso de mercado,
+
+calibrar por bucket de cuota,
+
+meter shrinkage hacia mercado,
+
+pasar a EV prudente.
+
+Picks con alta incertidumbre de lineup.
+
+Picks donde el edge solo existe en un book soft aislado.
+
+Picks donde el mercado se mueve con fuerza contra ti cerca del cierre.
+
+Partidos con:
+
+rotación masiva,
+
+copas con incentivos opacos,
+
+juveniles/reservas,
+
+motivación extrema mal cuantificada,
+
+lesión/once probable incierto.
+
+C. Mejoras de modelo
+
+Te lo digo claro: no empezaría por meter un black-box grande. Primero reforzaría la columna vertebral.
+
+1) Sustituye el core actual por un modelo dinámico de fortalezas latentes
+
+Prioridad alta.
+
+Usaría un modelo de este tipo:
+
+fortalezas ofensivas y defensivas por equipo,
+
+ventaja local,
+
+evolución temporal tipo state-space / random walk / AR(1),
+
+covariables prepartido,
+
+distribución conjunta de goles mejor que Poisson independiente.
+
+La evidencia más útil aquí apunta a modelos dinámicos bivariados/state-space para fútbol, competitivos o superiores a variantes estáticas, y con resultados sólidos también en backtests frente a cuotas.
+
+Mi recomendación práctica en Python:
+
+Fase 1: dynamic bivariate Poisson o dynamic Skellam + calibración posterior.
+
+Fase 2: si detectas dispersión mal tratada, pasar a marginals más flexibles o copula count model en mercados concretos.
+
+2) Automatiza ELO y xG; deja de tratarlos como inputs manuales
+
+Tu ELO manual y xG manual deben morir como inputs primarios.
+
+Qué pondría en su lugar:
+
+rating automático actualizado partido a partido,
+
+rolling xG for / xG against,
+
+ajuste por fuerza de rival,
+
+split home/away,
+
+decay temporal,
+
+rest days,
+
+congestión de calendario.
+
+Y muy importante: ELO, forma y xG no deben ser tres “votos” iguales. Son señales parcialmente redundantes. Deben entrar como features o latentes, no como sumatoria de apoyo.
+
+3) Agrega una capa de jugadores / lineup
+
+Este es uno de los saltos más reales que te faltan.
+
+La literatura reciente muestra que un modelo basado en ratings de jugadores puede capturar la variación dinámica de la fuerza de los equipos de forma más directa que ratings de equipo agregados, con resultados positivos frente a bookmaker predictions en 1X2.
+
+Qué haría:
+
+modelo de probable XI antes de lineups oficiales,
+
+rating agregado del XI esperado,
+
+impacto de ausencias por rol, no solo por nombre,
+
+rerun del motor cuando salen lineups oficiales.
+
+Esto reduce dos problemas a la vez:
+
+picks locos por no incorporar una baja real,
+
+exceso de NO BET por incertidumbre no estructurada.
+
+4) Mete mercado como teacher, no como jefe
+
+Este cambio es importantísimo.
+
+No te recomiendo que el mercado decida por encima de tu modelo. Te recomiendo esto:
+
+modelo de datos = tu motor propio sin mercado,
+
+modelo de mercado = probabilidad no-vig de consenso / sharp,
+
+meta-modelo = aprende cuándo tu modelo debe acercarse al mercado y cuándo puede separarse.
+
+Hay evidencia de que combinar datos históricos con odds mejora ajuste y precisión predictiva, y también de que algunos books individuales no explotan toda la información contenida en las cuotas de sus competidores.
+
+Arquitectura concreta:
+
+p_data
+
+p_market
+
+gap = p_data - p_market
+
+features adicionales: calidad de input, lineup_known, league, odds bucket, line movement, market type
+
+salida: p_final
+
+Yo lo modelaría con algo simple y estable:
+
+logistic regression con splines o GAM, o
+
+gradient boosting monotónico solo si ya tienes suficiente historial.
+
+5) Crea una capa de calibración explícita por mercado
+
+Esto no es opcional.
+
+Harías:
+
+calibrador por mercado,
+
+por liga,
+
+y por bucket de cuota.
+
+Herramientas razonables:
+
+isotonic regression,
+
+beta calibration,
+
+Platt/beta según mercado.
+
+Sin eso, el motor seguirá creyendo edges que no existen.
+
+6) Crea una capa de incertidumbre
+
+Necesitas dejar de usar una sola probabilidad puntual.
+
+Fuentes de incertidumbre:
+
+parámetros del modelo,
+
+missingness,
+
+lineup incierto,
+
+contexto débil,
+
+dispersión entre submodelos.
+
+Cómo estimarla en algo realista para Python:
+
+bootstrap temporal,
+
+ensemble spread,
+
+posterior aproximado si haces Bayesian state-space.
+
+Y luego usar:
+
+p_mean
+
+sigma_p
+
+p_lower = p_mean - z * sigma_p
+
+El pick no sale por EV_mean; sale por EV_lower_bound.
+
+Cómo mejoraría cada mercado
+1X2
+
+Modelo base dinámico de fortalezas.
+
+Blend con mercado no-vig.
+
+Calibración por odds bucket.
+
+Shrinkage más fuerte en underdogs largos.
+
+Regla asimétrica favoritos vs underdogs.
+
+Over/Under
+
+No confiar solo en sumar lambdas Poisson.
+
+Revisar dispersión por liga.
+
+Calibración por línea exacta: 2.0, 2.25, 2.5, 2.75, 3.0 no son lo mismo.
+
+Usar contexto solo si tiene efecto cuantificable sobre ritmo/shot volume.
+
+BTTS
+
+No dejarlo como derivado “pasivo” del score model.
+
+Hacer un head específico con features como:
+
+lambda_home,
+
+lambda_away,
+
+correlación,
+
+xG for/against de ambos,
+
+clean-sheet rates ajustados,
+
+style/tempo proxy.
+
+Handicap
+
+Modelarlo sobre goal difference, no sobre intuición de línea.
+
+Skellam o distribución derivada del score model, más calibración posterior.
+
+Benchmark obligatorio contra Asian handicap market.
+
+Favoritos vs underdogs
+
+No usar solo “favorito estructural”.
+
+Usar calibración histórica por bucket de odds y market type.
+
+Underdogs largos necesitan penalización empírica, no moral.
+
+Value picks
+
+No usar raw edge.
+
+Usar edge después de:
+
+quitar vig,
+
+calibrar,
+
+shrink hacia mercado,
+
+aplicar incertidumbre,
+
+pasar filtro de liquidez/regímenes.
+
+Qué quitaría o simplificaría
+
+ELO manual como input principal.
+
+xG manual como input principal.
+
+conteo de sistemas a favor con pesos implícitos iguales.
+
+guardrails heurísticos redundantes que duplican lo que debería hacer la calibración.
+
+arbitraje básico de líneas como módulo suelto; debe absorberse en una capa formal de mercado.
+
+D. Mejoras de decisión
+
+Tu problema de PICK / NO BET no se resuelve “aflojando” filtros. Se resuelve rediseñando la política de decisión.
+
+Regla central nueva
+
+Haz esto:
+
+p_data = probabilidad del modelo cuantitativo.
+
+p_market = probabilidad no-vig de consenso/sharp.
+
+p_blend = combinación dependiente de calidad de input y fiabilidad del modelo.
+
+sigma_p = incertidumbre del pronóstico.
+
+p_lb = percentil prudente.
+
+EV_lb = p_lb * odds - 1
+
+action_score = EV_lb * fit_mercado * soporte_estructural * factor_liquidez
+
+Y emites PICK solo si:
+
+EV_lb > threshold_market_league
+
+calibración vigente no deteriorada,
+
+no hay veto duro de integridad de datos,
+
+el pick pertenece a una celda históricamente rentable.
+
+Cómo combinar soporte estructural con EV
+
+No con votos. No con “tiene 5 sistemas a favor”.
+
+Haz que cada módulo sea un experto con peso aprendido.
+Ejemplo de features para el decisor:
+
+logit(p_data)
+
+logit(p_market)
+
+gap_model_market
+
+input quality
+
+lineup uncertainty
+
+context confidence
+
+favorite flag
+
+odds bucket
+
+line movement
+
+league
+
+market type
+
+ensemble spread
+
+Y encima un meta-modelo simple que aprenda la política.
+Eso es muchísimo mejor que un comité artesanal de reglas.
+
+Cómo evitar picks locos por cuota alta
+
+Esto es lo que falta de verdad:
+
+Calibración por bucket de cuota.
+
+Shrinkage asimétrico hacia mercado en underdogs.
+
+EV de límite inferior, no EV medio.
+
+Bloqueo de regímenes históricamente malos.
+
+Límite dinámico por odds/mercado hasta que haya evidencia real de rentabilidad.
+
+Ejemplo brutalmente práctico:
+
+En 1X2 visitante @5.80, aunque p_model diga 21%, si:
+
+calibración del bucket corrige a 17%,
+
+mercado consenso está en 14%,
+
+la incertidumbre te deja p_lb en 13.5%,
+entonces no hay pick.
+Ese es exactamente el tipo de edge falso que hoy te está entrando a veces.
+
+Stake
+
+No uses stake heurístico suelto.
+
+Usa fractional Kelly prudente, porque la literatura práctica sobre betting investment deja claro que las modificaciones tipo fractional Kelly existen precisamente para mitigar el riesgo extra derivado de supuestos irreales y errores de estimación.
+
+Yo usaría:
+
+kelly(p_lb, odds)
+
+multiplicado por:
+
+k entre 0.10 y 0.25,
+
+reliability_factor del mercado/liga,
+
+quality_factor del input.
+
+cap duro por mercado.
+
+Y otra cosa:
+publicar pick y apostar internamente no tienen por qué tener el mismo umbral.
+Yo mantendría internamente tres estados:
+
+REJECT
+
+LEAN
+
+PICK_PUBLIC
+aunque hacia fuera sigas mostrando solo PICK / NO BET.
+
+E. Aprendizaje
+
+Aquí estás corto. Hoy el sistema parece pensado para emitir. Debe quedar pensado para aprender.
+
+Qué variables guardar por cada candidato
+
+No solo por pick emitido. Por cada candidato evaluado.
+
+Identidad y snapshot
+
+match_id
+
+liga
+
+fecha/hora
+
+mercado
+
+línea
+
+book
+
+timestamp de captura
+
+minutos a kickoff
+
+Probabilidades
+
+p_raw_model
+
+p_calibrated
+
+p_market_no_vig
+
+p_final
+
+sigma_p
+
+p_lower_bound
+
+Features clave
+
+rating diff
+
+xG for/against ajustado
+
+forma reciente
+
+home advantage estimate
+
+rest days
+
+congestion
+
+probable lineup strength
+
+injuries/suspensions flags
+
+weather flag
+
+referee features
+
+context tags estructurados con:
+
+fuente,
+
+confianza,
+
+timestamp,
+
+vencimiento
+
+Decisión
+
+EV_mean
+
+EV_lb
+
+action_score
+
+stake
+
+reason codes
+
+veto codes
+
+model version
+
+calibrator version
+
+feature version
+
+Mercado
+
+odds open
+
+odds at pick
+
+odds close
+
+consenso de mercado
+
+margen estimado
+
+line movement
+
+Resultado
+
+outcome binario / multinomial
+
+retorno realizado
+
+half win / push / half loss
+
+closing benchmark
+
+Qué métricas analizaría
+De forecast
+
+log loss
+
+Brier score
+
+calibration slope/intercept
+
+reliability curves
+
+sharpness
+
+CRPS si modelas distribución de goles
+
+Las proper scoring rules son exactamente el marco correcto para evaluar probabilidades, porque permiten juzgar calibración y sharpness a la vez.
+
+De decisión
+
+ROI
+
+yield
+
+drawdown
+
+hit rate
+
+stake-weighted ROI
+
+retorno por unidad de riesgo
+
+closing benchmark / CLV-like tracking
+
+Por segmentación
+
+por mercado
+
+por liga
+
+por bucket de cuota
+
+favorito vs underdog
+
+por calidad de input
+
+por time-to-kickoff
+
+por book
+
+por versión de modelo
+
+por fuente de contexto
+
+Cómo rediseñaría el módulo de aprendizaje
+
+Tabla maestra candidate_bets
+Todo lo que el motor consideró.
+
+Tabla issued_picks
+Solo lo que salió publicado.
+
+Evaluador walk-forward
+Nunca random CV. Solo validación temporal.
+
+Recalibración periódica
+semanal o mensual, según volumen.
+
+Champion / Challenger
+El nuevo modelo corre en sombra antes de reemplazar al activo.
+
+Optimización de thresholds
+no sobre ROI in-sample; sobre utilidad penalizada + calibración + benchmark de cierre.
+
+Drift detection
+Si cae la calibración o el benchmark de cierre por debajo de umbral, el sistema reduce stake automáticamente o bloquea ese mercado.
+
+F. Roadmap exacto de implementación
+
+Te pongo el orden que yo seguiría. No el más bonito. El de más impacto real.
+
+Fase 1 — impacto inmediato
+
+1. Instrumentación total y almacenamiento de candidatos
+Sin esto, no aprendes nada.
+Haz primero:
+
+candidate_bets
+
+issued_picks
+
+market_snapshots
+
+versionado de modelo/calibrador
+
+2. Separar engine de predicción y engine de decisión
+Ahora mismo probablemente están mezclados.
+Debes tener:
+
+prediction_engine
+
+calibration_engine
+
+decision_engine
+
+evaluation_engine
+
+3. Rehacer benchmark de mercado
+
+consenso multi-book,
+
+no-vig,
+
+open / current / close,
+
+distinguir sharp vs soft,
+
+tracking de cierre.
+
+4. Añadir calibración por mercado y odds bucket
+Esto te va a quitar una parte importante de los picks locos antes de tocar el modelo base.
+
+Fase 2 — mejorar señal real
+
+5. Automatizar ELO, xG y features prepartido
+Aquí matas la principal fragilidad operativa.
+
+6. Añadir lineup/player layer
+Probable XI + impacto de bajas.
+
+7. Sustituir el core por modelo dinámico de fortalezas
+Dynamic bivariate Poisson o Skellam/state-space.
+
+Fase 3 — mejorar decisión y rentabilidad
+
+8. Crear meta-modelo de combinación modelo propio + mercado
+Mercado como teacher, no como dictador.
+
+9. Añadir incertidumbre explícita y decisión por EV_lower_bound
+Este cambio te reduce:
+
+NO BET estéril,
+
+picks locos,
+
+stake mal calibrado.
+
+10. Rehacer el stake con fractional Kelly prudente
+Capado y dependiente de fiabilidad real.
+
+Fase 4 — podar y especializar
+
+11. Construir matriz de rentabilidad por liga x mercado x bucket
+Y matar sin piedad lo que no funcione.
+
+12. Solo después: modelo dedicado de tarjetas
+Porque hoy no lo tienes.
+Y si vas a tocarlo, tócala bien: las tarjetas son small counts correlacionados, con heterogeneidad real de árbitros y equipos; eso pide modelo propio, no un promedio manual del referee. Estudios recientes sobre tarjetas muestran precisamente esa naturaleza bajo-dispersa/correlacionada y heterogeneidad de árbitros/equipos, y trabajos anteriores ya encontraron valor en bookings markets cuando se modelan de forma conjunta con el partido.
+
+13. Dejar Perplexity/Ollama como capa auxiliar de extracción
+No como motor de decisión.
+El objetivo final debe ser:
+
+APIs / scrapers / fuentes estructuradas primero,
+
+LLM solo para estructurar y explicar.
+
+Mi veredicto final
+
+Tu sistema no necesita más humo.
+Necesita, en este orden:
+
+menos inputs manuales,
+
+menos reglas artesanales,
+
+más calibración,
+
+más dinámica temporal,
+
+mejor benchmark de mercado,
+
+incertidumbre explícita,
+
+aprendizaje cerrado con datos de candidatos y cierre.
+
+La crítica más dura que te hago es esta:
+hoy tu motor parece más un “modelo con comité de excepciones” que un sistema cuantitativo plenamente gobernado.
+
+La buena noticia es que no estás lejos del camino correcto. La base conceptual es buena. Lo que te falta no es “otra IA”. Lo que te falta es convertir el prototipo en arquitectura cuantitativa seria.
+
+Si yo tuviera que elegir un solo rediseño central, sería este:
+
+Separar completamente “estimación de probabilidades” de “política de apuesta”, y obligar a que cualquier pick sobreviva a calibración, shrinkage hacia mercado y EV de límite inferior.
+
+Eso, por sí solo, te debería:
+
+bajar picks absurdos,
+
+reducir falsos edges en cuota alta,
+
+bajar NO BET estéril sin volver el motor agresivo,
+
+y hacer que el sistema empiece a aprender de verdad.

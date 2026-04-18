@@ -6,8 +6,36 @@ from datetime import datetime
 from fpdf import FPDF
 import pandas as pd
 
+from fonts import get_fuente_emoji
+
 CARPETA_BASE = os.path.join(os.path.dirname(__file__), "..", "07_PICKSREALES")
-RUTA_FUENTE_EMOJI = r"C:\Windows\Fonts\segoeui.ttf"
+
+_FUENTE_EMOJI_RUTA = get_fuente_emoji()
+
+
+import logging
+
+def _safe_add_font(pdf):
+    """Centraliza la carga segura de la fuente, silenciando logs ruidosos y evitando caidas."""
+    if not _FUENTE_EMOJI_RUTA:
+        return
+        
+    fpdf_logger = logging.getLogger("fpdf")
+    old_lvl = fpdf_logger.level
+    fpdf_logger.setLevel(logging.CRITICAL)
+    try:
+        pdf.add_font("Emoji", "", _FUENTE_EMOJI_RUTA, uni=True)
+    except Exception:
+        pass
+    finally:
+        fpdf_logger.setLevel(old_lvl)
+
+def _set_font_segura(pdf, tamano):
+    """Establece la fuente de forma segura, con fallback directo a Helvetica."""
+    try:
+        pdf.set_font("Emoji", "", tamano)
+    except Exception:
+        pdf.set_font("Helvetica", "", tamano)
 
 
 def _cargar_json_archivo(ruta_archivo):
@@ -86,18 +114,14 @@ def recopilar_todos_los_picks():
 
 
 def generar_pdf(data, incluir_alternativas=True):
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
-
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
-
-    pdf.set_font("Emoji", "", 16)
+    _safe_add_font(pdf)
+    _set_font_segura(pdf, 16)
     pdf.cell(0, 10, "Jr AI 11 - Analisis de Apuestas", ln=True, align="C")
 
-    pdf.set_font("Emoji", "", 10)
+    _set_font_segura(pdf, 10)
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
     pdf.cell(0, 6, f"Fecha: {fecha} | 8 IAs analistas", ln=True, align="C")
 
@@ -118,18 +142,18 @@ def generar_pdf(data, incluir_alternativas=True):
         ):
             continue
 
-        pdf.set_font("Emoji", "", 14)
+        _set_font_segura(pdf, 14)
         pdf.cell(0, 8, f"Partido: {nombre_partido}", ln=True)
         pdf.set_draw_color(200, 200, 200)
         pdf.line(pdf.get_x(), pdf.get_y(), pdf.get_x() + 190, pdf.get_y())
         pdf.ln(2)
 
         if picks["principales"]:
-            pdf.set_font("Emoji", "", 11)
+            _set_font_segura(pdf, 11)
             pdf.set_text_color(0, 100, 0)
             pdf.cell(0, 6, "Picks principales", ln=True)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Emoji", "", 10)
+            _set_font_segura(pdf, 10)
             for pick in picks["principales"]:
                 pdf.ln(2)
                 pdf.cell(0, 5, f"{pick['ia']} - {pick['mercado']}", ln=True)
@@ -148,11 +172,11 @@ def generar_pdf(data, incluir_alternativas=True):
             pdf.ln(2)
 
         if incluir_alternativas and picks["alternativas"]:
-            pdf.set_font("Emoji", "", 11)
+            _set_font_segura(pdf, 11)
             pdf.set_text_color(150, 75, 0)
             pdf.cell(0, 6, "Picks alternativos", ln=True)
             pdf.set_text_color(0, 0, 0)
-            pdf.set_font("Emoji", "", 10)
+            _set_font_segura(pdf, 10)
             for alt in picks["alternativas"]:
                 pdf.ln(2)
                 pdf.cell(0, 5, f"{alt['ia']} - {alt['mercado']} (descartado)", ln=True)
@@ -166,7 +190,7 @@ def generar_pdf(data, incluir_alternativas=True):
         pdf.ln(5)
 
     pdf.set_y(-15)
-    pdf.set_font("Emoji", "", 8)
+    _set_font_segura(pdf, 8)
     pdf.cell(
         0,
         10,
@@ -185,9 +209,6 @@ def generar_pdf(data, incluir_alternativas=True):
 def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtitulo=""):
     if df is None or df.empty:
         raise ValueError("No hay picks para exportar.")
-
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
 
     trabajo = df.copy()
     if "confianza" in trabajo.columns:
@@ -210,12 +231,12 @@ def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtit
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
+    _safe_add_font(pdf)
 
-    pdf.set_font("Emoji", "", 18)
+    _set_font_segura(pdf, 18)
     pdf.cell(0, 10, titulo, ln=True, align="C")
 
-    pdf.set_font("Emoji", "", 10)
+    _set_font_segura(pdf, 10)
     fecha = datetime.now().strftime("%d/%m/%Y %H:%M")
     texto_sub = subtitulo.strip() if subtitulo else "Boletin generado desde la base interna"
     pdf.cell(0, 6, texto_sub, ln=True, align="C")
@@ -226,7 +247,7 @@ def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtit
     total_alternativas = int((trabajo["tipo_pick"] == "alternativa").sum())
     total_pendientes = int((trabajo["resultado"] == "pendiente").sum())
 
-    pdf.set_font("Emoji", "", 10)
+    _set_font_segura(pdf, 10)
     pdf.cell(0, 6, f"Principales: {total_principales} | Alternativos: {total_alternativas} | Pendientes: {total_pendientes}", ln=True)
     pdf.ln(4)
 
@@ -243,7 +264,7 @@ def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtit
         if partido != partido_actual:
             partido_actual = partido
             pdf.ln(2)
-            pdf.set_font("Emoji", "", 13)
+            _set_font_segura(pdf, 13)
             pdf.set_text_color(20, 20, 20)
             pdf.cell(0, 8, partido_actual, ln=True)
             pdf.set_draw_color(210, 210, 210)
@@ -251,7 +272,7 @@ def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtit
             pdf.ln(2)
 
         tipo_pick = str(row.get("tipo_pick", "principal") or "principal").strip().lower()
-        pdf.set_font("Emoji", "", 10)
+        _set_font_segura(pdf, 10)
         if tipo_pick == "principal":
             pdf.set_text_color(0, 90, 0)
             etiqueta = "PICK PRINCIPAL"
@@ -280,7 +301,7 @@ def generar_pdf_desde_dataframe(df, titulo="Jr AI 11 - Boletin de Picks", subtit
         pdf.ln(2)
 
     pdf.set_y(-15)
-    pdf.set_font("Emoji", "", 8)
+    _set_font_segura(pdf, 8)
     pdf.cell(0, 10, "Documento interno de apoyo para publicacion y seguimiento.", 0, 0, "C")
 
     resultado = pdf.output()
@@ -293,13 +314,11 @@ def generar_pdf_pick_oficial(pick, titulo="Jr AI 11 - Pick Oficial", subtitulo="
     if not pick:
         raise ValueError("No hay informacion del pick oficial.")
 
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
-
     pdf = FPDF()
+    pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
+    _safe_add_font(pdf)
 
     partido = str(pick.get("partido", "Partido")).strip()
     mercado = str(pick.get("mercado", "-")).strip()
@@ -310,25 +329,25 @@ def generar_pdf_pick_oficial(pick, titulo="Jr AI 11 - Pick Oficial", subtitulo="
     analisis = str(pick.get("analisis_breve", "") or "").strip()
     analisis = analisis[:320] + ("..." if len(analisis) > 320 else "")
 
-    pdf.set_font("Emoji", "", 20)
+    _set_font_segura(pdf, 20)
     pdf.cell(0, 12, titulo, ln=True, align="C")
 
-    pdf.set_font("Emoji", "", 11)
+    _set_font_segura(pdf, 11)
     pdf.cell(0, 6, subtitulo, ln=True, align="C")
     pdf.cell(0, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), ln=True, align="C")
     pdf.ln(8)
 
-    pdf.set_font("Emoji", "", 16)
+    _set_font_segura(pdf, 16)
     pdf.cell(0, 10, partido, ln=True, align="C")
     pdf.ln(2)
 
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.set_text_color(0, 90, 0)
     pdf.cell(0, 8, "PICK OFICIAL", ln=True, align="C")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
 
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.cell(0, 7, f"Mercado: {mercado}", ln=True)
     if cuota > 0:
         pdf.cell(0, 7, f"Seleccion: {seleccion} @ {cuota:.2f}", ln=True)
@@ -339,11 +358,11 @@ def generar_pdf_pick_oficial(pick, titulo="Jr AI 11 - Pick Oficial", subtitulo="
     pdf.ln(3)
 
     if analisis:
-        pdf.set_font("Emoji", "", 11)
+        _set_font_segura(pdf, 11)
         pdf.multi_cell(0, 6, f"Lectura breve: {analisis}")
 
     pdf.ln(6)
-    pdf.set_font("Emoji", "", 9)
+    _set_font_segura(pdf, 9)
     pdf.multi_cell(0, 5, "Material informativo para seguimiento deportivo. Verifica cuotas finales antes de publicar o entrar.")
 
     resultado = pdf.output()
@@ -356,13 +375,11 @@ def generar_pdf_resultado_pick(pick, titulo="Jr AI 11 - Resultado del Pick", sub
     if not pick:
         raise ValueError("No hay informacion del pick cerrado.")
 
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
-
     pdf = FPDF()
+    pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
+    _safe_add_font(pdf)
 
     partido = str(pick.get("partido", "Partido")).strip()
     mercado = str(pick.get("mercado", "-")).strip()
@@ -382,25 +399,25 @@ def generar_pdf_resultado_pick(pick, titulo="Jr AI 11 - Resultado del Pick", sub
     elif resultado_pick == "media":
         color = (170, 120, 0)
 
-    pdf.set_font("Emoji", "", 20)
+    _set_font_segura(pdf, 20)
     pdf.cell(0, 12, titulo, ln=True, align="C")
 
-    pdf.set_font("Emoji", "", 11)
+    _set_font_segura(pdf, 11)
     pdf.cell(0, 6, subtitulo, ln=True, align="C")
     pdf.cell(0, 6, datetime.now().strftime("%d/%m/%Y %H:%M"), ln=True, align="C")
     pdf.ln(8)
 
-    pdf.set_font("Emoji", "", 16)
+    _set_font_segura(pdf, 16)
     pdf.cell(0, 10, partido, ln=True, align="C")
     pdf.ln(2)
 
-    pdf.set_font("Emoji", "", 14)
+    _set_font_segura(pdf, 14)
     pdf.set_text_color(*color)
     pdf.cell(0, 8, etiqueta, ln=True, align="C")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(2)
 
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.cell(0, 7, f"Mercado: {mercado}", ln=True)
     pdf.cell(0, 7, f"Seleccion: {seleccion}", ln=True)
     if cuota > 0:
@@ -412,11 +429,11 @@ def generar_pdf_resultado_pick(pick, titulo="Jr AI 11 - Resultado del Pick", sub
     pdf.ln(3)
 
     if analisis:
-        pdf.set_font("Emoji", "", 11)
+        _set_font_segura(pdf, 11)
         pdf.multi_cell(0, 6, f"Lectura breve original: {analisis}")
 
     pdf.ln(6)
-    pdf.set_font("Emoji", "", 9)
+    _set_font_segura(pdf, 9)
     pdf.multi_cell(0, 5, "Resumen de seguimiento para comunicacion y control interno del rendimiento.")
 
     resultado = pdf.output()
@@ -428,13 +445,11 @@ def generar_pdf_resultado_pick(pick, titulo="Jr AI 11 - Resultado del Pick", sub
 def generar_pdf_pick_social(pick, marca="Jr AI 11", subtitulo="Pick oficial"):
     if not pick:
         raise ValueError("No hay informacion del pick.")
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
-
     pdf = FPDF()
+    pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
+    _safe_add_font(pdf)
 
     partido = str(pick.get("partido", "Partido")).strip()
     mercado = str(pick.get("mercado", "-")).strip()
@@ -449,36 +464,36 @@ def generar_pdf_pick_social(pick, marca="Jr AI 11", subtitulo="Pick oficial"):
     pdf.rect(0, 0, 210, 297, "F")
 
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Emoji", "", 18)
+    _set_font_segura(pdf, 18)
     pdf.cell(0, 12, marca, ln=True, align="C")
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.set_text_color(214, 170, 76)
     pdf.cell(0, 8, subtitulo.upper(), ln=True, align="C")
     pdf.ln(8)
 
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Emoji", "", 20)
+    _set_font_segura(pdf, 20)
     pdf.multi_cell(0, 10, partido, align="C")
     pdf.ln(4)
 
-    pdf.set_font("Emoji", "", 14)
+    _set_font_segura(pdf, 14)
     pdf.set_text_color(214, 170, 76)
     pdf.cell(0, 8, f"{mercado}", ln=True, align="C")
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Emoji", "", 16)
+    _set_font_segura(pdf, 16)
     if cuota > 0:
         pdf.cell(0, 10, f"{seleccion} @ {cuota:.2f}", ln=True, align="C")
     else:
         pdf.cell(0, 10, seleccion, ln=True, align="C")
     pdf.ln(6)
 
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.cell(0, 8, f"Confianza declarada: {confianza:.0f}%", ln=True, align="C")
     pdf.cell(0, 8, f"Fuente: {ia}", ln=True, align="C")
     pdf.ln(8)
 
     if analisis:
-        pdf.set_font("Emoji", "", 11)
+        _set_font_segura(pdf, 11)
         pdf.set_text_color(220, 220, 220)
         pdf.multi_cell(0, 7, analisis, align="C")
 
@@ -491,13 +506,11 @@ def generar_pdf_pick_social(pick, marca="Jr AI 11", subtitulo="Pick oficial"):
 def generar_pdf_resultado_social(pick, marca="Jr AI 11", subtitulo="Resultado del pick"):
     if not pick:
         raise ValueError("No hay informacion del pick cerrado.")
-    if not os.path.exists(RUTA_FUENTE_EMOJI):
-        raise FileNotFoundError(f"Fuente no encontrada en {RUTA_FUENTE_EMOJI}")
-
     pdf = FPDF()
+    pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.add_font("Emoji", "", RUTA_FUENTE_EMOJI, uni=True)
+    _safe_add_font(pdf)
 
     partido = str(pick.get("partido", "Partido")).strip()
     mercado = str(pick.get("mercado", "-")).strip()
@@ -519,24 +532,24 @@ def generar_pdf_resultado_social(pick, marca="Jr AI 11", subtitulo="Resultado de
     pdf.rect(0, 0, 210, 297, "F")
 
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Emoji", "", 18)
+    _set_font_segura(pdf, 18)
     pdf.cell(0, 12, marca, ln=True, align="C")
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.set_text_color(214, 170, 76)
     pdf.cell(0, 8, subtitulo.upper(), ln=True, align="C")
     pdf.ln(10)
 
-    pdf.set_font("Emoji", "", 26)
+    _set_font_segura(pdf, 26)
     pdf.set_text_color(*color)
     pdf.cell(0, 14, etiqueta, ln=True, align="C")
     pdf.ln(4)
 
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Emoji", "", 18)
+    _set_font_segura(pdf, 18)
     pdf.multi_cell(0, 10, partido, align="C")
     pdf.ln(4)
 
-    pdf.set_font("Emoji", "", 13)
+    _set_font_segura(pdf, 13)
     pdf.cell(0, 8, f"{mercado}", ln=True, align="C")
     if cuota > 0:
         pdf.cell(0, 8, f"{seleccion} @ {cuota:.2f}", ln=True, align="C")
@@ -544,7 +557,7 @@ def generar_pdf_resultado_social(pick, marca="Jr AI 11", subtitulo="Resultado de
         pdf.cell(0, 8, seleccion, ln=True, align="C")
     pdf.ln(6)
 
-    pdf.set_font("Emoji", "", 12)
+    _set_font_segura(pdf, 12)
     pdf.cell(0, 8, f"Ganancia registrada: {ganancia:.2f}", ln=True, align="C")
 
     resultado = pdf.output()

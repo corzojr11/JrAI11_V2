@@ -1,0 +1,348 @@
+Auditoría Cuantitativa: Motor JrAI11_V2
+A. Diagnóstico Crítico
+Lo que está bien (conservar)
+Arquitectura híbrida manual-cuantitativa: El enfoque de ELO/xG manual como anclas bayesianas previas es correcto. Evitas el problema del "cold start" y sobreajuste a datos históricos ruidosos.
+Dixon-Coles: La corrección de dependencia en marcadores bajos es fundamental. Sin ella, el modelo subestima empates 0-0 y 1-0.
+Guardrails existentes: La noción de "favorito estructural" y penalización a cuotas largas muestra comprensión del sesgo de longshot.
+Calidad del input como variable: Modelar la incertidumbre del dato (no solo el dato) es sofisticado y poco común en motores amateur.
+Lo que está mal o incompleto
+1. El "Paradojo de la Precisión Estéril"
+Tu motor sufre de underfitting deliberado excesivo. Al combinar:
+ELO manual (subjetivo)
+xG manual (subjetivo)
+Penalización agresiva a cuotas largas
+Contexto estructurado (que probablemente añade ruido si Ollama alucina)
+Estás creando un sistema que dice "NO BET" cuando la incertidumbre es alta, pero la rentabilidad en betting viene de explotar incertidumbre mal precificada por el mercado, no de evitarla. Un motor que nunca apuesta en partidos equilibrados o con datos pobres deja dinero sobre la mesa.
+2. Poisson Base + Manual Override = Inconsistencia Bayesiana
+Tienes un modelo Poisson (frecuentista) mezclado con ajustes manuales bayesianos (ELO, xG) sin un framework de actualización coherente. Estás haciendo "Bayes empírico a mano" sin calcular las verosimilitudes ni las posteriors. Resultado: las probabilidades finales no son ni las del modelo ni las del experto, son una mezcla arbitraria.
+3. El Problema del Contexto Estructurado
+Usar Ollama para estructurar contexto de Perplexity es arquitectónicamente frágil:
+Perplexity puede traer datos irrelevantes o desactualizados
+Ollama local (modelos 7B-13B) no tiene capacidad de razonamiento causal profundo para filtrar ruido
+Estás introduciendo variabilidad no cuantificada en tu pipeline de decisión
+4. Mercado Eficiente Mal Implementado
+Comparar "probabilidad modelo vs cuota implícita" asume que tu modelo es mejor que el mercado. Si tu modelo es Poisson básico + ajustes manuales, el mercado es mejor que tú en la mayoría de casos. Necesitas identificar cuándo tu modelo sabe algo que el mercado ignora, no comparar números al azar.
+5. Ausencia de Modelación de Varianza
+No mencionas modelar la varianza/intervalos de confianza de tus predicciones. Un pick con EV +5% pero varianza gigante es distinto a uno con EV +3% y varianza baja. Tu sistema los trata igual.
+B. Riesgos Cuantitativos
+Sobreajuste y Sesgos
+Sesgo de Confirmación en Inputs Manuales
+Al cargar ELO/xG manualmente, inconscientemente ajustas estos valores para que concuerden con tu intuición del partido. Esto crea un look-ahead bias donde el "input manual" ya contiene información del resultado esperado.
+Sobreajuste en Guardrails
+Los guardrails contra "picks locos" probablemente estén calibrados en datos históricos pequeños o intuición. Si bloqueaste ciertos tipos de picks que perdieron 3 veces seguidas, puedes haber eliminado estrategias EV+ válidas con mala varianza a corto plazo.
+Mal Calibración en Mercados de Tarjetas
+Tienes señal de árbitro pero no modelo de tarjetas. Estás usando una variable predictiva sin el modelo dependiente correspondiente. Esto genera falsos positivos: detectas árbitro estricto pero no sabes cómo traducirlo a probabilidad de tarjetas, solo "penalizas calidad".
+Mercados Mal Tratados
+Handicap Asiático: Dixon-Coles funciona para 1X2, pero para handicaps necesitas modelar la distribución completa de diferencias de goles, no solo probabilidades de resultado. Tu "lectura básica de línea justa" probablemente subestima la probabilidad en líneas intermedias (-0.25, -0.75).
+BTTS: Poisson asume independencia de goles locales/visitantes (corregido parcialmente por Dixon-Coles pero no completamente). BTTS necesita modelar correlación explícita o usar modelos bivariados.
+Cuotas Largas (Underdogs): Poisson subestima sistemáticamente underdogs porque asume distribución "normal-alrededor-de-la-media". Los partidos con favorito claro tienen colas más gordas de lo que Poisson predice.
+C. Mejoras de Modelo (Concretas y Aplicables)
+1. Framework Bayesiano Coherente (Alto Impacto)
+Reemplaza la mezcla manual por un Modelo de Tres Niveles:
+Python
+Copy
+# Pseudocódigo de arquitectura
+class BayesianEngine:
+    def __init__(self):
+        self.prior_elo = ELOModel()  # Tu ELO manual como prior
+        self.likelihood_xg = xGLikelihood()  # xG como verosimilitud
+        self.posterior = None
+    
+    def update(self, match_data):
+        # Actualización bayesiana formal
+        self.posterior = self.prior_elo * self.likelihood_xg
+        return self.posterior
+Implementación: Usa pymc o numpyro para MCMC, o aproximación variacional si necesitas velocidad. Esto reemplaza "cargar datos manualmente" por "actualizar distribuciones".
+2. Modelo de Distribución de Diferencia de Goles (Impacto Medio-Alto)
+Para handicaps y líneas justas, modela directamente P(Diferencia = d) en lugar de derivar de 1X2.
+Python
+Copy
+# Extensión de Dixon-Coles para diferencias
+def dixon_coles_diff(lambda_home, lambda_away, rho, max_goals=10):
+    # Matriz de probabilidades conjuntas
+    probs = np.zeros((max_goals, max_goals))
+    for i in range(max_goals):
+        for j in range(max_goals):
+            base = poisson.pmf(i, lambda_home) * poisson.pmf(j, lambda_away)
+            if i == 0 and j == 0: tau = 1 - rho
+            elif i == 0 and j == 1: tau = 1 + rho
+            elif i == 1 and j == 0: tau = 1 + rho
+            elif i == 1 and j == 1: tau = 1 - rho
+            else: tau = 1.0
+            probs[i,j] = base * tau
+    
+    # Convolución a diferencia
+    diff_probs = {}
+    for i in range(max_goals):
+        for j in range(max_goals):
+            d = i - j
+            diff_probs[d] = diff_probs.get(d, 0) + probs[i,j]
+    
+    return diff_probs
+3. Modelo de Varianza Heterocedástica (Impacto Alto)
+Tus parámetros Poisson (lambda_home, lambda_away) deben tener intervalos de credibilidad, no solo punto.
+Python
+Copy
+# En lugar de: lambda = 1.8
+# Usa: lambda ~ Normal(1.8, 0.4) donde 0.4 es incertidumbre del modelo
+
+def monte_carlo_ev(lambda_dist, market_odds, n_sims=10000):
+    ev_samples = []
+    for lam in np.random.choice(lambda_dist, n_sims):
+        prob = calculate_prob(lam)  # Tu modelo Poisson
+        ev = prob * market_odds - 1
+        ev_samples.append(ev)
+    
+    return {
+        'ev_mean': np.mean(ev_samples),
+        'ev_std': np.std(ev_samples),
+        'prob_positive': np.mean(np.array(ev_samples) > 0)
+    }
+Solo apuestas si prob_positive > 0.7 (70% de confianza de que EV es positivo).
+4. Corrección de Colas para Underdogs (Impacto Medio)
+Añade una mezcla de distribuciones:
+90% Poisson estándar (partido "normal")
+10% Distribución de colas gruesas (sorpresas, expulsiones tempranas, etc.)
+Python
+Copy
+def mixture_prob(lambda_base, tail_weight=0.1, tail_factor=2.0):
+    # Componente normal
+    normal = poisson.pmf(k, lambda_base)
+    # Componente cola (mayor varianza)
+    tail = poisson.pmf(k, lambda_base * tail_factor)
+    return (1-tail_weight) * normal + tail_weight * tail
+5. Eliminación/Rediseño del Contexto IA (Impacto Medio)
+Problema: Ollama estructurando Perplexity es ruido no cuantificado.
+Solución: Reemplazar por Feature Engineering Estructurado:
+Scrapea datos objetivos (lesiones, suspensiones, rotaciones) vía APIs (API-Football, Understat)
+Codifica como variables duras: key_players_missing_home, fatigue_index, travel_distance
+No uses LLMs para el cálculo de probabilidades, úsalos solo para narrativa post-decisión
+Si insistes en usar contexto libre, implementa Validación de Impacto:
+Python
+Copy
+def validate_context_feature(feature_name, historical_data):
+    # Calcula si esta feature realmente predice resultados
+    correlation = calculate_correlation(feature_name, 'outcome', historical_data)
+    if abs(correlation) < 0.05:
+        return False  # Eliminar feature, es ruido
+    return True
+D. Mejoras de Decisión (Motor de Emisión)
+1. Sistema de Decisión por Umbrales Dinámicos
+Tu problema de "demasiados NO BET" viene de umbrales fijos. Implementa umbrales adaptativos por mercado:
+Python
+Copy
+class AdaptiveThresholds:
+    def __init__(self, min_ev=0.05, min_confidence=0.6):
+        self.base_ev = min_ev
+        self.base_conf = min_confidence
+        self.market_history = {}
+    
+    def get_thresholds(self, market_type, data_quality):
+        # Mercados con más incertidumbre necesitan más EV para compensar
+        if market_type == '1X2' and data_quality > 0.8:
+            return {'ev': 0.02, 'conf': 0.55}  # Más permisivo
+        elif market_type == 'handicap':
+            return {'ev': 0.08, 'conf': 0.70}  # Más estricto
+        elif data_quality < 0.5:
+            return {'ev': 0.15, 'conf': 0.80}  # Muy estricto si datos pobres
+        else:
+            return {'ev': self.base_ev, 'conf': self.base_conf}
+2. Calibración de Stake por Kelly Fraccional con Penalización de Varianza
+Python
+Copy
+def kelly_adjusted(prob, odds, bankroll, confidence, variance_factor):
+    # Kelly completo
+    q = 1 - prob
+    b = odds - 1
+    kelly_c = (prob * b - q) / b
+    
+    # Ajustes
+    if kelly_c <= 0:
+        return 0
+    
+    # Fraccional (más conservador)
+    fraction = 0.25
+    
+    # Penalización por varianza/incertidumbre
+    variance_penalty = 1 / (1 + variance_factor)  # Si varianza alta, penaliza
+    
+    # Penalización por confianza del modelo
+    confidence_factor = confidence  # 0.6 a 0.95
+    
+    stake = bankroll * kelly_c * fraction * variance_penalty * confidence_factor
+    
+    return min(stake, bankroll * 0.05)  # Max 5% del bankroll
+3. Filtro de Coherencia Estructural (Anti-Picks Locos)
+En lugar de guardrails arbitrarios, usa coherencia interna:
+Python
+Copy
+def structural_coherence_check(model_outputs):
+    """
+    Verifica que las probabilidades de diferentes mercados sean consistentes
+    """
+    # Si modelo dice Over 2.5 = 60%, entonces BTTS debe ser ~50-70%
+    # Si BTTS calculado es 30%, hay incoherencia
+    
+    over_25_prob = model_outputs['over_2.5']
+    btts_prob = model_outputs['btts']
+    
+    # Relación teórica aproximada
+    expected_btts_range = (over_25_prob * 0.7, over_25_prob * 1.1)
+    
+    if not (expected_btts_range[0] <= btts_prob <= expected_btts_range[1]):
+        coherence_score = 0.5  # Penaliza
+    else:
+        coherence_score = 1.0
+    
+    return coherence_score
+4. Sistema de "Apuestas Diferidas" para Datos Pobres
+En lugar de NO BET cuando faltan datos, implementa niveles de activación:
+Nivel A (Datos completos): Stake normal, todos los mercados
+Nivel B (Falta xG): Solo 1X2, stake reducido, EV mínimo más alto
+Nivel C (Solo ELO): Solo favoritos fuertes (cuota < 1.5), stake mínimo
+Esto evita la esterilidad manteniendo prudencia.
+E. Sistema de Aprendizaje (El Feedback Loop)
+Variables a Guardar por Pick (Schema Obligatorio)
+JSON
+Copy
+{
+  "pick_id": "uuid",
+  "timestamp": "2026-03-21T14:30:00",
+  "match_id": "external_id",
+  
+  "input_features": {
+    "elo_home": 1850,
+    "elo_away": 1720,
+    "xg_home": 1.8,
+    "xg_away": 1.2,
+    "data_quality_score": 0.85,
+    "context_features": ["lesion_portero", "clima_lluvia"]
+  },
+  
+  "model_outputs": {
+    "prob_home": 0.55,
+    "prob_draw": 0.25,
+    "prob_away": 0.20,
+    "variance_estimate": 0.12,
+    "model_uncertainty": 0.15
+  },
+  
+  "market_conditions": {
+    "market": "1X2",
+    "selection": "home",
+    "odds_taken": 1.90,
+    "ev_calculated": 0.045,
+    "confidence": 0.72,
+    "stake_suggested": 2.5,
+    "stake_actual": 2.0
+  },
+  
+  "result": {
+    "outcome": "win",
+    "profit": 1.8,
+    "closing_odds": 1.75,
+    "opening_odds": 1.95
+  },
+  
+  "meta": {
+    "model_version": "v2.3",
+    "thresholds_used": "adaptive_v1"
+  }
+}
+Métricas de Análisis Post-Resultado
+Calibration Plots: Por bins de probabilidad predicha (0-10%, 10-20%, etc.), calcula % real de acierto. Debe estar cerca de la diagonal.
+ROI por Feature:
+¿Picks con data_quality > 0.8 rentables?
+¿Picks en lluvia pierden más?
+¿ELO manual mejora o empeora vs ELO calculado?
+Market Impact:
+Comparar odds_taken vs closing_odds. Si sistemáticamente tomas odds peores que el cierre, estás en mercados eficientes (mal).
+Variance-Adjusted Returns:
+Sharpe ratio de los picks, no solo ROI.
+Módulo de Auto-Ajuste
+Python
+Copy
+class ModelRecalibrator:
+    def __init__(self, lookback=100):
+        self.lookback = lookback
+        self.calibration_data = []
+    
+    def update(self, new_pick_result):
+        self.calibration_data.append(new_pick_result)
+        if len(self.calibration_data) > self.lookback:
+            self.calibration_data.pop(0)
+    
+    def recalibrate(self):
+        # Ajusta parámetros de forma, pesos de ELO, etc.
+        # basado en rendimiento reciente
+        
+        recent_roi = calculate_roi(self.calibration_data)
+        if recent_roi < -0.05:
+            # El modelo está perdiendo, revisar calibración
+            return self.adjust_thresholds(more_conservative=True)
+        
+        # Ajustar pesos de features basado en importancia
+        feature_importance = self.calculate_feature_importance()
+        return feature_importance
+F. Roadmap de Implementación (Orden Estricto)
+Fase 1: Fundamentos y Estabilidad (Semanas 1-2)
+1.1 Implementar Logging Completo
+Schema de pick completo (sección E)
+Guardar estado completo del modelo antes de cada decisión
+Impacto: Crítico para poder auditar después
+1.2 Calibración de Probabilidades
+Generar calibration plot con picks históricos
+Identificar si tu modelo está sobre/subestimando favorites
+Impacto: Alto, corrige sesgo sistemático inmediato
+1.3 Sistema de Varianza
+Implementar Monte Carlo para intervalos de confianza en EV
+Mostrar ev_mean y ev_std en UI
+Impacto: Alto, reduce picks de alta varianza
+Fase 2: Modelo (Semanas 3-5)
+2.1 Reemplazo Bayesiano
+Migrar ELO/xG manual a framework numpyro o aproximación variacional
+Eliminar "carga manual" por "actualización de prior"
+Impacto: Muy Alto, base del sistema
+2.2 Modelo de Diferencias para Handicap
+Implementar convolución de Dixon-Coles para líneas asiáticas
+Eliminar "lectura básica" por cálculo riguroso
+Impacto: Medio-Alto, mejora precisión en handicaps
+2.3 Filtro de Coherencia Estructural
+Validar consistencia entre mercados
+Bloquear picks incoherentes internamente
+Impacto: Medio, reduce picks locos
+Fase 3: Decisión Inteligente (Semanas 6-7)
+3.1 Umbrales Adaptativos
+Implementar AdaptiveThresholds por tipo de mercado y calidad de datos
+Reemplazar "NO BET masivo" por "niveles de activación"
+Impacto: Alto, resuelve problema de esterilidad
+3.2 Kelly con Penalización
+Stake sizing basado en varianza y confianza
+Impacto: Medio, optimiza bankroll growth
+3.3 Eliminación de Contexto IA
+Mover Ollama/Perplexity a fase de narrativa post-pick
+Reemplazar por features estructuradas scrappeadas
+Impacto: Medio, reduce ruido
+Fase 4: Aprendizaje (Semana 8+)
+4.1 Pipeline de Feedback
+Automatizar recolección de resultados
+Calcular métricas de calibración semanalmente
+Impacto: Alto, permite mejora continua
+4.2 Auto-Ajuste de Forma
+Ajustar automáticamente pesos de "forma reciente" basado en predictividad histórica
+Impacto: Medio, reduce overfitting a forma
+4.3 Detección de Drift
+Monitorear si distribución de inputs cambia (lesiones masivas, cambio de entrenador en medio de temporada)
+Alertar cuando modelo necesite reentrenamiento
+Impacto: Medio, robustez a cambios de régimen
+Conclusión y Prioridades
+El cambio más importante: Tu motor actual es un "calculador de Poisson con guardrails conservadores". Necesita convertirse en un "sistema bayesiano de toma de decisión bajo incertidumbre".
+Los tres cambios que más impacto tendrán:
+Framework Bayesiano coherente (elimina inconsistencia ELO/xG manual)
+Umbrales adaptativos (resuelve parálisis de NO BET)
+Logging completo + calibración (permite aprendizaje real)
+Lo que debes eliminar ahora:
+Decisión basada en contexto libre procesado por LLM local
+Umbrales fijos de EV/confianza
+La idea de que "datos pobres = no apostar" (debe ser "datos pobres = apostar menos y en mercados más simples")
+El sistema puede ser rentable, pero necesita dejar de ser una "herramienta de análisis" y convertirse en un "motor de decisión probabilístico". La diferencia es la gestión explícita de la incertidumbre en cada paso.

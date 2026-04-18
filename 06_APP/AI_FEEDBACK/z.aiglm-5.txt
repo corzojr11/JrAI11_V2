@@ -1,0 +1,91 @@
+A. DIAGNÓSTICO CRÍTICO
+Lo que está bien (Base sólidia):
+
+Enfoque híbrido: La combinación Dixon-Coles + Poisson es el estándar de la industria para modelos analíticos básicos. Es matemáticamente correcta para la generación de marcadores.
+Arquitectura de decisión: Tener un módulo de Guardrails y Calidad de Input separado del modelo puro es una excellente práctica de ingeniería. Separa la "física" (probabilidad) de la "metafísica" (decisión de apostar).
+Uso de ELO y xG: Son los inputs correctos. El problema no es la variable, es cómo entra (manual).
+Lo que está mal o incompleto (Cuellos de botella):
+
+Dependencia de inputs manuales (El talón de Aquiles): Cargar ELO y xG manualmente no escala y introduce sesgos humanos. Si te equivocas en un dato, el modelo falla. Además, imposibilita la automatización del backtesting y el aprendizaje automático.
+Falta de correlación en los mercados: Poisson y Dixon-Coles tratan los goles del local y visitante como eventos independientes o con correlación débil. Esto falla estrepitosamente en mercados de BTTS y Handicaps en partidos desequilibrados. El modelo probablemente sobreestima la probabilidad de que el débil marque en ciertos contextos.
+El problema del "NO BET" excesivo: Es síntoma de un sistema de incertidumbre mal calibrada. Si el modelo exige "calidad perfecta" para emitir pick, es porque no sabe gestionar la incertidumbre. Un motor profesional debe apostar incluso con ruido, si el precio lo compensa (EV+ amplio).
+Contexto "suave" vs "duro": Usar Ollama/Perplexity para contexto es útil, pero si ese contexto no se cuantifica (ej. "Baja por lesión del delantero estrella = -0.3 xG"), el motor no puede usarlo matemáticamente. Lo trata como texto, no como ajuste de lambda.
+B. RIESGOS CUANTITATIVOS
+Sobreajuste a la "Lógica Humana": Al tener ELO manual y guardrails basados en reglas duras ("favorito estructural"), corres el riesgo de crear un sistema que apuesta lo que tú pensarías que es correcto, no lo que el mercado indica.
+Mala calibración en colas pesadas (Value en cuotas largas): El modelo detecta valor en cuotas largas porque Poisson subestima la probabilidad de resultados extremos (ej. 0-0 en partidos de favoritos, o goleadas inesperadas).
+Riesgo: El modelo ve valor en un underdog de 6.00 porque su ELO dice que debería ser 4.50. Pero el mercado sabe que hay variables no modeladas (motivación, partido intrascendente). Sin un filtro de "volumen de mercado" o "liquidez", estás apostando contra el sabio colectivo con información incompleta.
+Mercados mal tratados:
+Handicap Asiático: Usar solo Poisson aquí es peligroso. Necesitas simulaciones de Monte Carlo para ver la distribución de probabilidades alrededor de la línea, no solo una esperanza matemática.
+BTTS: Poisson asume independencia. En la realidad, si un equipo golea, el otro se abre y marca más. Tu modelo probablemente falla en partidos con alta expectativa de goles.
+C. MEJORAS DE MODELO
+1. Automatización de Inputs (Prioridad Crítica):
+
+Elimina la entrada manual. Crea un módulo Updater que consuma una API (o scrapee) resultados pasados para recalcular ELO y xG automáticamente después de cada jornada.
+Sin esto, el motor no puede "aprender" ni hacer backtesting serio.
+2. Mejora del Núcleo (Core):
+
+Dixon-Coles no es suficiente: Implementa Rue-Salvesen o un ajuste de dependencia bivariada (Frank Copula es una opción robusta y accesible). Esto corrige la correlación de goles.
+Impacto: Mejora drásticamente la precisión en BTTS y empates.
+Decaimiento Temporal (Time-Decay): Los datos de hace 6 meses valen menos que los de ayer. Aplica una función exponencial de decaimiento a los xG y ELO. Peso = exp(-alpha * días_transcurridos).
+3. Tratamiento por Mercado:
+
+1X2: Mantén Dixon-Coles, pero añade un "league correction factor" (factor de corrección por liga). La Serie A tiene menos goles que la Eredivisie; el modelo debe ajustar el lambda base por liga.
+Over/Under: No uses media de goles. Usa la distribución acumulada de Poisson ajustada. Para líneas asiáticas (ej. 2.25, 2.75), necesitas Monte Carlo (10,000 simulaciones por partido) para calcular el valor esperado exacto.
+Favoritos vs Underdogs: Crea dos sub-modelos.
+Modelo A (Favoritos): Más sensible a la capacidad ofensiva (xG).
+Modelo B (Underdogs): Más sensible a la capacidad defensiva y contexto (necesidad de puntos).
+D. MEJORAS DE DECISIÓN (PICK / NO BET)
+El problema del exceso de NO BET se resuelve con una Función de Utilidad y no con umbrales rígidos.
+
+1. Stake Dinámico (Kelly Criterio Fraccional):
+
+No uses stakes fijos ni porcentajes fijos.
+Calcula el stake óptimo usando la fórmula de Kelly: f* = (bp - q) / b.
+La clave: Usa Half-Kelly (1/2 Kelly) o Quarter-Kelly.
+Si el modelo calcula un stake sugerido del 5% y la confianza es media, reduces al 1.5%.
+Resultado: Donde antes dabas NO BET por desconfianza leve, ahora das un pick con stake mínimo. El sistema deja de ser estéril.
+2. Filtro de "Sanity Check" (Bloqueo de picks locos):
+
+Implementa una regla de discrepancia de mercado:
+Si Prob_Modelo > 40% y Prob_Mercado < 15% (Cuota > 6.00) -> BLOQUEO AUTOMÁTICO.
+Racional: El mercado suele tener razón en desajustes tan grandes. El modelo no tiene información privilegiada sobre lesiones de última hora o motivación interna que el mercado ya ha descontado.
+Solo permitir picks en cuotas largas (>4.00) si la discrepancia es menor al 25%.
+3. Calidad del Input revisitada:
+
+En lugar de castigar con NO BET, castiga reduciendo el stake.
+Stake_Final = Kelly_Base * (Calidad_Input / 100).
+Si falta un dato importante, el stake baja al 20% de lo sugerido. Si todo está perfecto, stake al 100%.
+E. APRENDIZAJE Y FEEDBACK LOOP
+Para que el sistema aprenda, necesitas una base de datos estructurada, no solo logs.
+
+1. Variables a guardar (Registro de Predicción):
+
+Match_ID, Market, Pick, Odds_Taken, Model_Prob, Market_Prob, EV_Expected.
+Confidence_Score, Input_Quality_Score.
+Result (0/1), Profit_Loss.
+Closing_Odds (Cuota de cierre). Vital para medir si "bateste al cierre".
+2. Módulo de Aprendizaje (Post-Match):
+Crea un script learner.py que se ejecute periódicamente:
+
+Calibración de Probabilidades: Compara la probabilidad predicha vs la frecuencia real.
+Ejemplo: Si el modelo dice "80% de confianza" en 100 picks, ¿ganaste 80? Si ganaste 70, tu modelo es sobreconfiado.
+Ajuste: Aplica una Regresión Logística sobre las salidas de tu modelo para calibrar probabilidades futuras (Platt Scaling).
+Análisis de Mercado: Si pierdes consistentemente en un mercado (ej. Handicap -1.5), reduce el fit de ese mercado automáticamente o eleva el umbral de confianza requerido.
+F. ROADMAP DE IMPLEMENTACIÓN
+Este es el orden para tener impacto real inmediato:
+
+Fase 1: Operatividad y Datos (Semana 1-2)
+
+Automatizar ELO/xG: Crea el script que actualiza estos valores desde una fuente externa (API-Football, Football-Data, etc.). Elimina la carga manual. Sin esto, todo lo demás es irrelevante.
+Base de Datos: Implementa SQLite o PostgreSQL para guardar cada predicción y resultado real.
+Fase 2: Ajuste Fino del Motor (Semana 3-4)
+
+Implementar Monte Carlo: Para mercados de Handicap y Over/Under. Reemplaza el cálculo analítico simple por simulación.
+Nuevo Sistema de Stake: Implementar Kelly Fraccional atado a la Calidad de Input. Esto reducirá los NO BET y hará el sistema más "orgánico".
+Filtro de Discrepancia Máxima: Añadir el bloqueo duro para cuotas largas con diferencias de probabilidad absurdas.
+Fase 3: Inteligencia y Aprendizaje (Mes 2)
+
+Calibración de Probabilidades: Correr el primer análisis de calibración con los datos acumulados (necesitas unas 300-500 apuestas para que sea estadísticamente relevante).
+Contexto Cuantificado: Si usas Perplexity/Ollama, pídeles que devuelvan un JSON con un "Factor de Ajuste" numérico (ej. {"impact": -0.15, "reason": "Key player injury"}). Suma ese factor al xG o réstalo al ELO antes de correr el modelo.
+Resumen de Arquitecto:
+Tu motor tiene buen "chasis" (lógica de mercados, guardrails), pero le falta el "motor de combustión" (datos automatizados y calibración dinámica). Deja de alimentarlo a mano y deja de pedirle perfección para emitir picks; pídele precisión en el riesgo (stake). Ahí está la rentabilidad.

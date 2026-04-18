@@ -1,0 +1,150 @@
+AUDITORÍA TÉCNICA: MOTOR JR11_V2
+Rol: Arquitecto Cuantitativo & Auditor de Riesgo
+Fecha: Octubre 2023 (Simulado)
+Objetivo: Optimización de Alpha, Reducción de Varianza y Automatización.
+A. DIAGNÓSTICO CRÍTICO
+1. Lo que está bien (Activos)
+Hibridez Matemática + Contexto: La base de Poisson + Dixon-Coles es el estándar de la industria para modelos de conteo. Es sólido.
+Guardrails de Riesgo: Tener reglas que castigan cuotas largas sin soporte es vital para la supervivencia del bankroll.
+Separación de Señal y Ruido: El intento de distinguir entre "valor matemático" y "contexto real" es la dirección correcta.
+Arquitectura Modular: Al tener piezas separadas (ELO, xG, Forma), es posible auditar y reemplazar componentes sin tirar todo el sistema.
+2. Lo que está mal o incompleto (Pasivos Críticos)
+Inputs Manuales (ELO/xG): Este es el fallo arquitectónico más grave. Un sistema cuantitativo no puede depender de entrada manual de datos.
+Riesgo: Inconsistencia, error humano, falta de escala y look-ahead bias (si actualizas el ELO después de saber el resultado).
+Consecuencia: El modelo no es replicable ni backtesteable fielmente.
+LLM como Ajuste de Probabilidad: Usar Ollama/Perplexity para "estructurar contexto" está bien, pero si ese contexto modifica las probabilidades base del Poisson directamente, estás introduciendo ruido no cuantificable. Los LLMs son motores de narrativa, no de probabilidad.
+Exceso de NO BET: Si el motor da demasiados NO BET, no es por prudencia, es por mala calibración.
+Teoría: En un mercado eficiente, deberías encontrar valor en el 2-5% de los eventos. Si encuentras 0%, tu modelo está subestimando el margen de la casa o sobreestimando su propia precisión.
+Modelo de Tarjetas Naive: Usar un promedio manual de amarillas para ajustar el fit general es insuficiente. Las tarjetas siguen una distribución diferente a los goles (más varianza, dependiente del árbitro y del estilo de juego, no solo del promedio).
+3. Sesgos Estructurales
+Sesgo de Recencia en "Forma Ponderada": Si la ponderación no decae exponencialmente, estás dando demasiado peso a partidos que ya no reflejan la realidad actual de la plantilla (bajas, cambios tácticos).
+Independencia de Goales: Poisson asume que los goles del Local son independientes de los del Visitante. En fútbol real, el game state (ir ganando 1-0 cambia la estrategia) crea correlación negativa. Dixon-Coles ayuda, pero no lo resuelve totalmente en mercados de Handicap.
+B. RIESGOS CUANTITATIVOS
+1. Sobreajuste (Overfitting)
+Riesgo: Si los pesos de ELO, xG y Forma se ajustaron mirando resultados pasados sin validación cruzada (Walk-Forward Analysis), el modelo está "memorizando" el pasado.
+Síntoma: Funciona bien en backtest, mal en live.
+Solución: Implementar validación out-of-sample estricta.
+2. Mala Calibración de Probabilidades
+Riesgo: El modelo dice 60% (cuota 1.66) pero la realidad es 50% (cuota 2.00).
+Detección: Necesitas gráficos de calibración (Reliability Diagrams). Si tu modelo predice 100 eventos al 50% y aciertas 40, está mal calibrado.
+Impacto: El cálculo de EV (Expected Value) es basura. EV = (Prob_Model * Cuota) - 1. Si Prob_Model es falsa, el EV es ficticio.
+3. Mercados Mal Tratados
+Handicap Asiático: Poisson directo falla aquí. Necesitas convolución de distribuciones.
+Tarjetas: El promedio simple es peligroso. Un partido de "derbi" con árbitro estricto no es la suma de dos promedios. Es una multiplicación de tensión.
+Long Odds (>3.00): El motor detecta valor aquí porque la varianza es alta. Un acierto cada 10 no cubre la racha perdedora si el stake no está optimizado (Kelly).
+4. Picks que debe bloquear mejor
+Valor por "Error de Línea" vs "Valor Real": A veces la cuota sube porque salió una noticia (lesión) que el modelo no sabe. El modelo ve valor, pero es una trampa.
+Filtro: Si la cuota se mueve >10% en 1 hora y el contexto LLM no reporta noticias, BLOQUEAR. Es dinero inteligente moviendo la línea.
+C. MEJORAS DE MODELO (TÉCNICO)
+1. Automatización de Inputs (Prioridad 0)
+Acción: Eliminar carga manual de ELO/xG.
+Implementación Python:
+ELO: Conectar a API de clubelo.com (scraping o API si existe) o calcular ELO propio dinámico tras cada jornada (fórmula estándar Elo con factor K ajustado por diferencia de goles).
+xG: Usar understat.com (scraping) o calcular xG proxy basado en tiros en puerta y ubicación promedio (si no hay API).
+Beneficio: El sistema puede correr solo, sin tu intervención, eliminando sesgo humano.
+2. Evolución del Modelo de Goles
+Actual: Poisson + Dixon-Coles.
+Mejora: Bivariate Poisson o Modelo Jerárquico Bayesiano.
+Por qué: Permite correlacionar los goles (si el local marca, el visitante se expone).
+Implementación: Librería scipy.stats para copulas o pymc para enfoque bayesiano (más robusto con pocos datos).
+Simplificación: Si es muy complejo, mejora la estimación de lambda (tasa de goles). Usa una media ponderada: 0.4 * xG_Reciente + 0.3 * xG_Temporada + 0.3 * Fuerza_Oponente.
+3. Mercado Específico
+1X2: Mantener Dixon-Coles para corregir el 0-0 y 1-1.
+Over/Under: No usar solo la media. Modelar la varianza. Equipos que generan muchos tiros pero poca precisión tienen alta varianza (más propensos a Over/Under extremos).
+Handicap: Usar simulación de Montecarlo (10,000 iteraciones) sobre la distribución de goles resultante para obtener la probabilidad exacta de cubrir el handicap. No uses fórmulas cerradas aquí.
+Tarjetas: Cambiar a Distribución Binomial Negativa. Las tarjetas tienen "over-dispersion" (más varianza que la media). Poisson subestima la probabilidad de muchas tarjetas.
+4. Favoritos vs Underdogs
+Problema: Los modelos suelen sobrevalorar a los favoritos en ligas menores.
+Ajuste: Aplicar un Factor de Regresión a la Media. Si un favorito tiene una racha de 5 victorias, su lambda de ataque debe penalizarse ligeramente hacia la media de la liga.
+D. MEJORAS DE DECISIÓN (LÓGICA DE TRADING)
+1. Lógica PICK / NO BET
+Actual: Umbral fijo de EV o Confianza.
+Mejora: Umbral Dinámico basado en Calidad de Input.
+Si Calidad_Input < 0.7 (faltan datos, lesiones dudosas), el EV mínimo requerido sube de 5% a 15%.
+Si Calidad_Input > 0.9, el EV mínimo puede bajar a 3%.
+Filtro de Movimiento de Línea: Comparar la cuota de apertura vs. cuota actual. Si tu modelo da valor pero la línea se ha movido en tu contra drásticamente, reducir stake a 0 (el mercado sabe algo que tú no).
+2. Calibración de Stake (Gestión de Capital)
+Actual: Stake sugerido (probablemente fijo o escalonado simple).
+Mejora: Kelly Criterium Fraccional.
+Fórmula: f* = (bp - q) / b
+Implementación: Usar 1/4 Kelly o 1/8 Kelly. El Kelly completo es demasiado volátil para fútbol.
+Tope: Máximo 2% del bankroll por pick, sin importar lo que diga Kelly.
+Razón: Maximiza crecimiento geométrico minimizando riesgo de ruina.
+3. Combinar Soporte Estructural con EV
+Regla de Oro: EV > 0 es necesario, pero no suficiente.
+Filtro de Consenso:
+Si Prob_Modelo > Prob_Book (Valor) Y Contexto_LLM es Neutral/Positivo -> PICK.
+Si Prob_Modelo > Prob_Book (Valor) Y Contexto_LLM es Negativo (ej. "Rotación esperada", "Lluvia torrencial") -> NO BET o Stake 50%.
+Nota: El LLM nunca debe crear el valor, solo puede destruirlo.
+4. Evitar Picks Locos por Cuota Alta
+Filtro de Varianza: Para cuotas > 3.00, exigir que la probabilidad implícita del modelo sea al menos el 70% de la probabilidad implícita de la cuota.
+Ejemplo: Cuota 4.00 (25%). Tu modelo debe dar al menos 17.5%. Si da 26% (EV alto) pero se basa en un escenario muy específico (ej. "empate 0-0"), bloquear.
+E. APRENDIZAJE (FEEDBACK LOOP)
+El sistema actual es "ciego" a sus propios errores. Necesita memoria.
+1. Variables a Guardar (Database Log)
+Cada pick (incluso NO BETs marcados como "casi") debe guardar en SQL/Parquet:
+timestamp
+partido_id
+mercado
+cuota_obtenida
+probabilidad_modelo (antes de ajustes)
+probabilidad_final (después de ajustes/contexto)
+ev_calculado
+stake_sugerido
+factores_contexto (tags: lluvia, lesiones, etc.)
+resultado (Win/Loss/Void)
+cuota_cierre (CLV - Closing Line Value)
+2. Métricas de Auditoría
+No mires solo % Acierto. Mide:
+CLV (Closing Line Value): ¿Ganaste a la cuota de apertura vs. la de cierre? Si tus picks suelen ganar valor antes de empezar, el modelo es bueno a largo plazo, aunque tengas mala racha.
+Calibración (Brier Score): Mide la precisión de las probabilidades.
+ROI por Mercado: ¿El modelo es bueno en Over 2.5 pero malo en 1X2? El sistema debe detectar esto y reducir peso en el mercado malo.
+Drawdown Máximo: Control de riesgo.
+3. Módulo de Aprendizaje (Auto-Tuning)
+Implementación: Script semanal (retrain_engine.py).
+Lógica:
+Analizar últimos 100 picks.
+Si ROI_Overs < -10% y ROI_Favorites > 5%, ajustar pesos: Reducir importancia de xG en modelo Over, Aumentar peso de ELO en 1X2.
+Bayesian Updating: Ajustar los parámetros alpha y beta de las distribuciones prioras basándose en el rendimiento reciente.
+Importante: Hacerlo con "learning rate" bajo. No cambiar todo el motor por una semana mala.
+F. ROADMAP DE IMPLEMENTACIÓN
+Orden exacto para maximizar impacto y minimizar riesgo.
+FASE 1: Cimientos de Datos (Semanas 1-2)
+Objetivo: Eliminar inputs manuales.
+Acciones:
+Crear scraper o conectar API para ELO y xG históricos.
+Automatizar la actualización de la base de datos de equipos antes de cada ejecución del motor.
+Implementar logging estructurado de todas las predicciones (SQLLite o PostgreSQL local).
+KPI: 0 inputs manuales requeridos para correr el motor.
+FASE 2: Calibración y CLV (Semanas 3-4)
+Objetivo: Saber si las probabilidades son reales.
+Acciones:
+Generar reporte de Calibración (Gráfica: Probabilidad Predicha vs. Frecuencia Real).
+Implementar cálculo de CLV (Cuota de Cierre).
+Ajustar el margen de la casa en el cálculo de EV. No comparar con la cuota cruda, comparar con la cuota "sin margen" (fair odds).
+KPI: Reducción del Brier Score.
+FASE 3: Gestión de Riesgo y Stake (Semana 5)
+Objetivo: Supervivencia del bankroll.
+Acciones:
+Implementar Kelly Fraccional (1/4).
+Añadir filtro de "Movimiento de Línea" (si la cuota cae >5% sin noticia, no apostar).
+Endurecer guardrails en cuotas > 3.00.
+KPI: Reducción de la varianza (drawdown más suave).
+FASE 4: Refinamiento del Modelo (Semanas 6-8)
+Objetivo: Alpha puro.
+Acciones:
+Migrar de Poisson simple a Bivariate o Montecarlo para Handicaps.
+Implementar modelo de Tarjetas con Binomial Negativa.
+Integrar el contexto LLM solo como filtro negativo (veto), no como generador de probabilidad.
+KPI: Mejora del ROI en mercados específicos (ej. Handicap).
+FASE 5: Aprendizaje Automático (Semana 9+)
+Objetivo: Sistema adaptativo.
+Acciones:
+Script de re-ajuste de pesos semanal basado en rendimiento por mercado.
+Detección automática de "regímenes de mercado" (ej. semanas de muchas sorpresas vs. semanas favoritas).
+KPI: Estabilidad del ROI a lo largo de 3 meses.
+CONCLUSIÓN DEL AUDITOR
+Tu motor JrAI11_V2 tiene una base lógica correcta pero sufre de "artesanalidad" en los datos (inputs manuales) y una confianza excesiva en la narrativa (LLM) para decisiones matemáticas.
+El cambio más crítico: Deja de ser un asistente que tú alimentas y conviértete en el supervisor de un sistema que se alimenta solo. La dependencia de tu input manual de ELO/xG es el techo que limita la escalabilidad y la objetividad.
+La clave de la rentabilidad: No está en encontrar más picks, está en calibrar mejor las probabilidades y gestionar el stake según la varianza real del mercado. Un modelo con 55% de acierto y mala gestión quiebra. Un modelo con 48% de acierto (pero buen CLV) y buena gestión, sobrevive.
+Procede con la Fase 1 inmediatamente. Sin datos automatizados, el resto de mejoras son irrelevantes.

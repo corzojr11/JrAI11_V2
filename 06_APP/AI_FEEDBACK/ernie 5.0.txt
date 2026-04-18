@@ -1,0 +1,158 @@
+Hola. Entendido. Asumo el rol de Arquitecto Cuantitativo y Auditor de Riesgos para JrAI11_V2.
+
+Voy a ser brutalmente honesto y técnico. Tu sistema tiene una base sólida (Poisson/Dixon-Coles es el estándar de oro para empezar), pero tiene "deuda técnica" y sesgos estructurales que están limitando su rentabilidad y escalabilidad. El hecho de que dependas de inputs manuales (ELO/xG) y de una arquitectura híbrida de LLMs (Ollama/Perplexity) para el contexto introduce ruido y latencia que un motor de trading de alta frecuencia (o incluso de media frecuencia) no debería tolerar.
+
+Aquí tienes la auditoría completa y la hoja de ruta para profesionalizar el motor.
+
+A. Diagnóstico Crítico: Lo que está roto y lo que funciona
+Lo que está BIEN (La Base):
+
+Poisson + Dixon-Coles: Es la elección correcta. Dixon-Coles es vital para corregir la subestimación de empates 0-0 y 1-1 que tiene el Poisson estándar.
+Comparación vs. Cuota Implícita (Market Efficiency): El concepto de buscar EV (Expected Value) comparando tu probabilidad contra la de la casa de apuestas es la única forma matemática de ganar a largo plazo.
+Guardrails básicos: La idea de penalizar cuotas largas sin soporte es correcta para evitar la "Favorite-Longshot Bias" (el sesgo donde las casas de apuestas ofrecen peor valor en los no favoritos).
+Lo que está MAL o INCOMPLETO (Las Debilidades):
+
+Inputs Manuales (ELO/xG): Esto es un error crítico. Si el ELO y el xG se cargan a mano, el sistema no es escalable y está sujeto a error humano y sesgo de confirmación. Además, un ELO estático no captura la "forma" dinámica (lesiones, moral, cambio de entrenador).
+Poisson es "Memoryless" y Simple: El modelo de Poisson asume que los goles son independientes y siguen una distribución fija. No entiende conceptos como "momento del partido", "fatiga acumulada" o "estilo de juego" (posesión vs. contraataque).
+Arquitectura de Contexto (Ollama/Perplexity):
+Problema: Usar Perplexity para buscar y Ollama para estructurar introduce latencia y alucinaciones. Los LLMs son malos para razonamiento lógico estricto y buenos para narrativa. Si el motor depende de esto para decidir un pick, estás introduciendo ruido estocástico innecesario.
+Veredicto: El contexto debe ser estructurado y numérico (JSON con datos de lesiones, clima, alineaciones), no texto libre procesado por un LLM. El LLM solo debería usarse para resumir noticias a variables binarias (ej: is_key_player_injured: True), no para "opinar".
+Reglas de Emisión Binarias (PICK/NO BET): Si el sistema da demasiados "NO BET", significa que tu umbral de confianza está mal calibrado o que tus features (variables) no tienen suficiente poder predictivo (bajo 
+R 
+2
+ 
+ o bajo Information Coefficient).
+B. Riesgos Cuantitativos
+Sobreajuste (Overfitting) a la "Forma Reciente":
+Si ponderas demasiado los últimos 3-5 partidos, el modelo reaccionará exageradamente a una racha de suerte (ej: un equipo mediocre que gana 3 veces seguidas por errores rivales). El modelo creerá que son buenos y apostará a su favor con cuota baja (mal valor) o contra ellos con cuota alta (riesgo).
+Riesgo: Quemar capital en regresión a la media.
+Mal Calibrado en Mercados Asiáticos/Handicap:
+El modelo Poisson predice bien 1X2 y Over/Under, pero falla estrepitosamente en Handicaps Asiáticos porque no modela la distribución de la diferencia de goles, solo el total de goles.
+Riesgo: Picks de handicap que parecen tener valor matemático pero que fallan por 1 gol constantemente.
+Sesgo de Selección (Selection Bias):
+Al filtrar tanto para evitar "locuras", podrías estar filtrando también oportunidades de valor real en equipos "undervalued" (infravalorados) que el mercado ignora injustamente.
+Riesgo: Sistema estéril que solo apuesta a lo obvio (Barcelona vs. equipo de 2ªB), donde el valor (EV) es casi nulo o negativo por la comisión de la casa.
+Falta de Gestión de Riesgo de Cola (Tail Risk):
+El Poisson subestima la probabilidad de goleadas (3+ goles) en equipos ofensivos. Si apuestas Over 2.5 basándote solo en la media de Poisson, perderás sistemáticamente en ligas como la Bundesliga o Eredivisie. Necesitas una distribución Bivariante Negativa Binomial.
+C. Mejoras de Modelo (Ingeniería de Features)
+No uses "Machine Learning" genérico. Usa Feature Engineering específico de fútbol.
+
+1. Eliminar Inputs Manuales:
+
+Automatización: Crea un scraper en Python (usando requests + BeautifulSoup o APIs como API-Football) que actualice ELO y xG esperado (xGA) automáticamente antes de cada run.
+Cálculo de ELO Dinámico: Implementa un algoritmo de ELO que se actualice post-partido basado en el resultado y el xG real vs esperado. Si un equipo pierde 0-1 pero genera 2.5 xG, su ELO no debería bajar tanto.
+2. Upgrade del Motor Probabilístico:
+
+Bivariate Poisson / Negative Binomial: Pasa de un Poisson univariado a uno bivariante. Esto modela la correlación entre goles locales y visitantes (si un equipo ataca mucho, el otro defiende más, o viceversa).
+Modelo Híbrido: Usa Poisson para la base, pero ajusta la lambda (
+λ
+) usando regresión (XGBoost o Ridge Regression) donde las features sean:
+ELO dinámico.
+xG diferencial (xG for - xG against).
+Días de descanso.
+Factor campo (histórico local).
+Clima (lluvia/viento afecta al Over/Under).
+3. Mejora por Mercado:
+
+1X2: Mantén Dixon-Coles, pero ajusta el "rho" (correlación de goles bajos) dinámicamente según la liga.
+Over/Under: Usa la distribución de Poisson para calcular la probabilidad exacta de 0, 1, 2, 3, 4+ goles y suma las probabilidades acumuladas. Importante: Aplica un "factor de inflación" para ligas de alta puntuación.
+BTTS (Ambos Marcan): No lo calcules como independiente. Calcula la probabilidad de que el local marque > 0 Y el visitante marque > 0. Es más preciso usar la matriz de probabilidad conjunta del modelo bivariante.
+Handicap: Deja de usar Poisson directo. Usa la Simulación de Monte Carlo. Genera 10,000 escenarios de partidos basados en tus lambdas ajustadas y mira en cuántos el equipo A gana por más de 1.5 goles. Eso es tu probabilidad real.
+4. Contexto Estructurado (Kill the LLM for logic):
+
+Deja de usar Ollama para "pensar". Usa Ollama solo para extraer entidades de noticias (Named Entity Recognition).
+Crea un diccionario de "Impacto":
+Baja Portero Titular: -0.3 goles esperados al equipo.
+Lluvia Torrencial: -15% probabilidad Over 2.5.
+Derbi / Rivalidad: +10% probabilidad de Tarjetas.
+Inyecta estos valores numéricos directamente en la Lambda del modelo Poisson.
+D. Mejoras de Decisión (El Filtro Final)
+El problema de "demasiados NO BET" y "cuotas locas" se resuelve con Calibración y Entropía.
+
+1. Filtro de Entropía (Information Gain):
+
+No hagas NO BET solo si la confianza es baja. Haz NO BET si la Entropía de Shannon de tu distribución de probabilidad es muy alta.
+Si el modelo dice: 40% Local, 30% Empate, 30% Visitante -> Entropía alta -> NO BET (Partido impredecible).
+Si el modelo dice: 70% Local, 20% Empate, 10% Visitante -> Entropía baja -> PICK (Partido claro).
+2. Filtro de "Lógica Futbolística" (Reglas Heurísticas Duras):
+
+Regla de Disparidad de Cuota: Si Cuota_Modelo < 1.2 (Favorito extremo) y EV < 5%, es NO BET. No vale la pena el riesgo por el retorno.
+Regla de Liga: Si es una liga menor (ej: Liga Indonesia, 2ª B de un país pequeño) donde el modelo tiene poco historial (data scarcity), fuerza un NO BET o reduce el stake al mínimo absoluto (flat stake 0.5%).
+Regla de xG: Si xG_Local - xG_Visitante > 1.0 pero la cuota del local es > 2.00, investigar (posible value). Si xG_Local - xG_Visitante < 0.5 y la cuota del local es < 1.50, es NO BET (trampa de mercado).
+3. Stake Sugerido (Kelly Criterion Fraccional):
+
+Olvida el stake fijo. Usa Kelly Fraccional.
+Stake= 
+Cuota−1
+(Probabilidad×Cuota)−1
+​
+ ×Fracci 
+o
+ˊ
+ n
+.
+Usa una fracción conservadora (ej: Kelly / 4 o Kelly / 8) para protegerte de la varianza.
+Ajuste por Calidad de Input: Si faltan datos (ej: no hay alineaciones confirmadas), multiplica el stake sugerido por 0.5.
+E. Aprendizaje (El Cerebro del Sistema)
+Para que el sistema aprenda, necesitas un Data Lake y un Backtesting Engine.
+
+1. Qué guardar (Logging):
+Por cada pick, guarda en una base de datos (SQLite o PostgreSQL) este JSON:
+
+json
+{
+  "match_id": "12345",
+  "timestamp": "2023-10-27T10:00:00",
+  "model_probs": {"1": 0.45, "X": 0.25, "2": 0.30},
+  "market_odds": {"1": 2.20, "X": 3.40, "2": 3.10},
+  "implied_prob": {"1": 0.454, "X": 0.294, "2": 0.322},
+  "ev": 0.02,
+  "confidence_score": 0.75,
+  "decision": "PICK_1",
+  "stake_suggested": 1.5,
+  "context_flags": ["key_player_injured", "rain"],
+  "outcome": "WIN", // o LOSS, VOID
+  "closing_odds": {"1": 2.10} // CRUCIAL para medir eficiencia real
+}
+2. Métricas de Auditoría:
+
+Log-Loss: ¿Qué tan precisas son tus probabilidades? (No solo si acertaste, sino si dijiste 60% y pasó el 60% de las veces).
+ROI / Yield: Rentabilidad real.
+CLV (Closing Line Value): ¿Tus picks tenían mejor cuota que la cuota de cierre? Si apuestas a 2.00 y cierra en 1.80, tu modelo es bueno, aunque el pick pierda. Si apuestas a 2.00 y cierra en 2.10, tu modelo es malo, aunque el pick gane. Esta es la métrica reina.
+Calibration Plot: Gráfico de barras. Eje X: Probabilidad predicha (0-10%, 10-20%...). Eje Y: Frecuencia real de acierto. Debe ser una línea diagonal. Si tu barra de "70-80%" tiene solo 50% de acierto, tu modelo está sobreestimando.
+3. Módulo de Aprendizaje (Retraining):
+
+Semanal/Mensual: Re-entrena los parámetros del modelo (lambdas de Poisson, pesos de regresión) usando los nuevos datos.
+Decay Factor: Dale más peso a los partidos recientes (ej: últimos 38 partidos o última temporada completa) usando una función de decaimiento exponencial.
+Feature Selection: Usa SHAP values (de la librería shap en Python) para ver qué variables aportan valor real. Si "Forma de los últimos 3 partidos" tiene SHAP value cercano a 0, elimínala del modelo.
+F. Roadmap de Implementación (Orden de Ejecución)
+No intentes hacer todo a la vez. Sigue este orden para impacto inmediato:
+
+Fase 1: Limpieza y Automatización (Semana 1-2)
+
+Eliminar Inputs Manuales: Script de Python para scrapear/calcular ELO y xG automáticamente desde fuentes de datos fiables.
+Base de Datos: Estructurar la DB para guardar el historial de logs (Punto E).
+Fix de Poisson: Implementar la corrección Dixon-Coles si no está perfecta (ajustar el parámetro rho por liga).
+Fase 2: Modelado Avanzado y Contexto (Semana 3-5)
+4. Bivariate Poisson / Monte Carlo: Implementar simulación de Monte Carlo para mercados de Handicap y Over/Under exactos.
+5. Contexto Numérico: Reemplazar la narrativa de Ollama por un extractor de features numéricos (Lesiones = -0.2 goles, etc.).
+6. Cálculo de EV y CLV: Implementar el seguimiento de cuota de cierre (Closing Line Value) en tiempo real.
+
+Fase 3: Inteligencia de Decisión (Semana 6-7)
+7. Filtro de Entropía: Implementar la lógica de "NO BET" basada en entropía de la distribución, no solo en confianza subjetiva.
+8. Stake Kelly Fraccional: Conectar el stake sugerido a la confianza del modelo y a la calidad del input.
+9. Guardrails 2.0: Añadir reglas duras de ligas (bloquear ligas con alta varianza no explicada por el modelo).
+
+Fase 4: Aprendizaje y Optimización (Semana 8+)
+10. Backtesting Engine: Crear un script que corra el modelo sobre los últimos 2 años de datos para ver el ROI teórico.
+11. Optimización de Hiperparámetros: Usar Optuna o GridSearch para encontrar el mejor "lookback window" (cuántos partidos mirar atrás) y el mejor peso para el xG.
+12. Dashboard de Calibración: Gráfico en Streamlit que muestre si el modelo está sobreestimando o subestimando probabilidades.
+
+Resumen de la Estrategia
+Tu motor actual es un "calculador de probabilidades". Necesitas convertirlo en un "trader de riesgo".
+
+Deja de confiar en la intuición humana (inputs manuales).
+Deja de confiar en la narrativa (LLMs para lógica).
+Confía en la simulación estadística (Monte Carlo) y en la eficiencia de mercado (CLV).
+Si el modelo no tiene una ventaja clara (EV+ y CLV+), la respuesta correcta es NO BET, y eso está bien. Es mejor no apostar que apostar con esperanza matemática negativa.
+Ejecuta la Fase 1 inmediatamente. Sin datos limpios y automáticos, cualquier mejora de modelo será inútil.

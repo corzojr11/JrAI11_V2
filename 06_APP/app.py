@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
@@ -7,19 +7,171 @@ import json
 import re
 import hmac
 from pathlib import Path
+import requests
+from typing import Optional
 
-from database import init_db, get_all_picks, update_resultado_con_cuota, save_picks, get_bankroll_inicial, get_stake_porcentaje, update_config, get_config_value, create_user, authenticate_user, get_all_users, update_user_status, update_user_profile, update_user_password, get_cached_team_logo, save_cached_team_logo, save_prepared_match, get_prepared_matches
+from database import init_db, update_resultado_con_cuota, save_picks, get_bankroll_inicial, get_stake_porcentaje, update_config, get_config_value, create_user, authenticate_user, get_all_users, update_user_status, update_user_profile, update_user_password, get_cached_team_logo, save_cached_team_logo, save_prepared_match, get_prepared_matches, update_subscription, get_user_subscription, get_subscription_stats, migrate_subscription_fields, save_motor_pick_log, get_motor_pick_logs
 from import_utils import validate_and_load_file
-from backtest_engine import calcular_metricas, es_handicap_asiatico
-from config import IAS_LIST, STAKE_PORCENTAJE, USD_TO_COP, MOSTRAR_USD, API_FOOTBALL_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ADMIN_PASSWORD
+from backtest_engine import es_handicap_asiatico
+from config import IAS_LIST, STAKE_PORCENTAJE, get_usd_to_cop, MOSTRAR_USD, API_FOOTBALL_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, ADMIN_PASSWORD, BOOTSTRAP_TOKEN
 from services.league_service import get_league_key, detectar_liga_automatica, LIGAS_NOMBRES
-from services.match_prepare_service import parsear_entrada_partido, preparar_partido_desde_api, construir_ficha_preparada, buscar_logo_equipo
+from services.match_prepare_service import parsear_entrada_partido, preparar_partido_desde_api, construir_ficha_preparada, buscar_logo_equipo, obtener_partidos_por_fecha, obtener_partidos_proximos, obtener_partidos_por_fecha_local, obtener_partidos_proximos_locales
 from services.ollama_context_service import analizar_contexto_ollama, sugerir_campos_contexto_ollama
 from core.judge import consolidar_picks, guardar_veredicto
-from motor_picks import analizar_partido_motor
+from core.motor.engine import analizar_partido_motor
+
+# Imports de módulos propios
+from core.auth.session import (
+    session_expired as _session_expired,
+    clear_admin_session as _clear_admin_session,
+    clear_public_session as _clear_public_session,
+    set_login_session as _set_login_session,
+    ADMIN_SESSION_MINUTES,
+    PUBLIC_SESSION_MINUTES,
+)
+from core.ui.components import (
+    render_public_card as _render_public_card,
+    market_icon as _market_icon,
+    team_initials as _team_initials,
+    team_logo_html as _team_logo_html,
+    get_team_logo_cached as _get_team_logo_cached,
+    render_pick_detail as _render_pick_detail,
+    render_section_banner as _render_section_banner,
+    filtrar_df_por_periodo as _filtrar_df_por_periodo,
+    resumen_periodo_dashboard as _resumen_periodo_dashboard,
+    render_empty_state as _render_empty_state,
+)
+from core.utils import cargar_prompt_automatico, cargar_comparativas, guardar_comparativas
+
+# Cliente backend mínimo
+BACKEND_URL = "http://localhost:8000"
+
+def fetch_backend_picks(incluir_alternativas: Optional[bool] = False):
+    import time
+    start_time = time.time()
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/picks",
+            params={"incluir_alternativas": incluir_alternativas},
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json()
+        df = pd.DataFrame(data.get("picks", []))
+        df_normalized = normalize_backend_picks_df(df)
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND] picks | time={elapsed}ms | status=ok")
+        return df_normalized
+    except Exception as e:
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND FALLBACK] picks | time={elapsed}ms | reason={str(e)}")
+        return None
+
+def fetch_backend_metrics(incluir_alternativas: Optional[bool] = False):
+    import time
+    start_time = time.time()
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/metrics",
+            params={"incluir_alternativas": incluir_alternativas},
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json()
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND] metrics | time={elapsed}ms | status=ok")
+        return data.get("metrics", data)
+    except Exception as e:
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND FALLBACK] metrics | time={elapsed}ms | reason={str(e)}")
+        return None
+
+def normalize_backend_picks_df(df: pd.DataFrame) -> pd.DataFrame:
+    required_columns = {
+        "id": 0,
+        "partido": "",
+        "mercado": "",
+        "seleccion": "",
+        "cuota": 1.0,
+        "confianza": 0.0,
+        "resultado": "pendiente",
+        "cuota_real": 1.0,
+        "ganancia": 0.0,
+        "ia": "",
+        "tipo_pick": "principal",
+        "fecha": "",
+        "analisis_breve": ""
+    }
+    if df is None or df.empty:
+        return pd.DataFrame(columns=required_columns.keys())
+    for col, default in required_columns.items():
+        if col not in df.columns:
+            df[col] = default
+    # Normalizar tipos
+    df['id'] = pd.to_numeric(df['id'], errors='coerce').fillna(0).astype(int)
+    df['cuota'] = pd.to_numeric(df['cuota'], errors='coerce').fillna(1.0)
+    df['confianza'] = pd.to_numeric(df['confianza'], errors='coerce').fillna(0.0)
+    df['cuota_real'] = pd.to_numeric(df['cuota_real'], errors='coerce').fillna(1.0)
+    df['ganancia'] = pd.to_numeric(df['ganancia'], errors='coerce').fillna(0.0)
+    return df
+
+def fetch_backend_partidos_por_fecha(fecha: str):
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/partidos_por_fecha",
+            params={"fecha": fecha},
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data.get("partidos", [])
+    except Exception as e:
+        print(f"Backend fetch failed for partidos por fecha: {e}")
+        return None
+
+def fetch_backend_api_status():
+    import time
+    start_time = time.time()
+    try:
+        response = requests.get(
+            f"{BACKEND_URL}/api/api-status",
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json()
+        configured = data.get("config", {}).get("api_football_key_configured", False)
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND] api-status | time={elapsed}ms | status=ok")
+        return "Conectada" if configured else "Sin key"
+    except Exception as e:
+        elapsed = int((time.time() - start_time) * 1000)
+        print(f"[BACKEND FALLBACK] api-status | time={elapsed}ms | reason={str(e)}")
+        return None
 
 st.set_page_config(page_title="Jr AI 11 - Plataforma de Analisis", layout="wide")
+
+# CSS global para fondo oscuro
+st.markdown("""
+    <style>
+    .stApp {
+        background: linear-gradient(180deg, #08101d 0%, #0d1524 48%, #101722 100%);
+    }
+    /* Reducir brillo de elementos blancos */
+    .stMarkdown, .stText, div[data-testid="stMetricValue"] {
+        color: #c8d0dc !important;
+    }
+    h1, h2, h3 {
+        color: #d8e0e8 !important;
+    }
+    /* Cards más oscuros */
+    div[style*="background: linear-gradient"] {
+        opacity: 0.95;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 init_db()
+migrate_subscription_fields()
 
 ADMIN_SESSION_MINUTES = 15
 PUBLIC_SESSION_MINUTES = 60
@@ -35,52 +187,10 @@ def formato_usd(valor):
 
 def mostrar_valor(cop, incluir_usd=True):
     if incluir_usd and MOSTRAR_USD:
-        usd = cop / USD_TO_COP
+        usd = cop / get_usd_to_cop()
         return f"{formato_cop(cop)} COP ({formato_usd(usd)} USD)"
     else:
         return formato_cop(cop)
-
-
-def cargar_prompt_automatico():
-    ruta_prompt = os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        "01_PROMPTS",
-        "automatizacion",
-        "analista_prompt_automatico.txt",
-    )
-    with open(ruta_prompt, "r", encoding="utf-8") as archivo:
-        return archivo.read()
-
-
-COMPARATIVA_PATH = Path(__file__).resolve().parent / "data" / "comparativa_espejo.json"
-
-
-def cargar_comparativas():
-    if not COMPARATIVA_PATH.exists():
-        return []
-    try:
-        with open(COMPARATIVA_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def guardar_comparativas(registros):
-    COMPARATIVA_PATH.parent.mkdir(exist_ok=True)
-    with open(COMPARATIVA_PATH, "w", encoding="utf-8") as f:
-        json.dump(registros, f, ensure_ascii=False, indent=2)
-
-
-def _session_expired(last_seen, minutes):
-    if not last_seen:
-        return True
-    try:
-        marca = datetime.fromisoformat(str(last_seen))
-    except Exception:
-        return True
-    return datetime.now() - marca > timedelta(minutes=minutes)
 
 
 def _extraer_equipos_partido(partido):
@@ -205,36 +315,39 @@ def _display_api_value(value, zero_is_missing=False):
     return value
 
 
-def _clear_admin_session():
-    st.session_state.admin_user = None
-    st.session_state.admin_last_password = ""
-    st.session_state.admin_last_seen = ""
-    st.session_state.admin_login_user = ""
-    st.session_state.admin_login_pass = ""
-    st.session_state.admin_force_new_password = ""
-    st.session_state.admin_force_confirm_password = ""
+def _prefer_prepared_value(saved_value, session_key, default=""):
+    texto = str(saved_value or "").strip()
+    if texto:
+        return texto
+    return str(st.session_state.get(session_key, default) or "")
 
 
-def _clear_public_session():
-    st.session_state.public_user = None
-    st.session_state.public_last_password = ""
-    st.session_state.public_last_seen = ""
-    st.session_state.public_login_user = ""
-    st.session_state.public_login_pass = ""
-
-
-def _set_login_session(user, password):
-    role = str(user.get("role", "") or "").strip().lower()
-    if role == "admin":
-        _clear_public_session()
-        st.session_state.admin_user = user
-        st.session_state.admin_last_password = password
-        st.session_state.admin_last_seen = datetime.now().isoformat()
-    else:
-        _clear_admin_session()
-        st.session_state.public_user = user
-        st.session_state.public_last_password = password
-        st.session_state.public_last_seen = datetime.now().isoformat()
+def _collect_prepared_manual_bridge():
+    saved = (
+        st.session_state.get("prepared_match_manual_data")
+        or st.session_state.get("prepared_match_last_manual_data")
+        or {}
+    )
+    motivacion_local = _prefer_prepared_value(saved.get("motivacion_local"), "prep_motivacion_local")
+    motivacion_visitante = _prefer_prepared_value(saved.get("motivacion_visitante"), "prep_motivacion_visitante")
+    contexto_extra = _prefer_prepared_value(saved.get("contexto_extra"), "prep_contexto_extra")
+    contexto_libre = "\n".join(
+        [x for x in [motivacion_local, motivacion_visitante, contexto_extra] if str(x or "").strip()]
+    ).strip()
+    bridge = {
+        **saved,
+        "xg_local": _prefer_prepared_value(saved.get("xg_local"), "prep_xg_local"),
+        "xg_visitante": _prefer_prepared_value(saved.get("xg_visitante"), "prep_xg_visitante"),
+        "elo_local": _prefer_prepared_value(saved.get("elo_local"), "prep_elo_local"),
+        "elo_visitante": _prefer_prepared_value(saved.get("elo_visitante"), "prep_elo_visitante"),
+        "promedio_tarjetas_arbitro": _prefer_prepared_value(saved.get("promedio_tarjetas_arbitro"), "prep_arbitro_cards_avg"),
+        "motivacion_local": motivacion_local,
+        "motivacion_visitante": motivacion_visitante,
+        "contexto_extra": contexto_extra,
+        "contexto_perplexity": _prefer_prepared_value(saved.get("contexto_perplexity"), "prep_perplexity_resultado"),
+        "contexto_libre": contexto_libre,
+    }
+    return bridge
 
 
 def render_portal_acceso():
@@ -347,13 +460,14 @@ def render_portal_acceso():
         login_user = st.text_input("Usuario o email", key="unified_login_user", placeholder="Tu usuario o email", label_visibility="collapsed")
         login_pass = st.text_input("Clave", type="password", key="unified_login_pass", placeholder="Tu clave", label_visibility="collapsed")
         if st.button("Entrar", key="unified_login_btn", use_container_width=True, type="primary"):
-            user = authenticate_user(login_user, login_pass)
-            if user:
-                _set_login_session(user, login_pass)
-                st.success("Acceso concedido.")
-                st.rerun()
-            else:
-                st.error("Credenciales invalidas o usuario inactivo.")
+            with st.spinner("Autenticando..."):
+                user = authenticate_user(login_user, login_pass)
+                if user:
+                    _set_login_session(user)
+                    st.success(f"Acceso concedido. Bienvenido, {user.get('display_name', user.get('username'))}.")
+                    st.rerun()
+                else:
+                    st.error("Credenciales invalidas o usuario inactivo. Revisa tus datos e intenta de nuevo.")
 
         st.markdown("<div class='access-caption'>¿No tienes cuenta?</div>", unsafe_allow_html=True)
         cta_label = "Ocultar registro" if st.session_state.show_public_register else "Crear cuenta nueva"
@@ -468,317 +582,6 @@ def _enviar_resultado_telegram_si_activo(pick):
         return False, f"Auto-publicacion de resultado fallo: {e}"
 
 
-def _render_public_card(titulo, cuerpo, etiqueta="", tono="normal", meta_left="", meta_right="", footer_hint=""):
-    color = "#d6aa4c"
-    borde = "#253041"
-    fondo = "#11161d"
-    acento = "linear-gradient(135deg, rgba(41,215,100,.18), rgba(214,170,76,.18))"
-    if tono == "win":
-        color = "#31b36b"
-        acento = "linear-gradient(135deg, rgba(49,179,107,.20), rgba(255,255,255,.04))"
-    elif tono == "loss":
-        color = "#d14b4b"
-        acento = "linear-gradient(135deg, rgba(209,75,75,.20), rgba(255,255,255,.04))"
-    elif tono == "push":
-        color = "#d6aa4c"
-        acento = "linear-gradient(135deg, rgba(214,170,76,.20), rgba(255,255,255,.04))"
-    meta_l = str(meta_left or "").lower()
-    if "1x2" in meta_l:
-        acento = "linear-gradient(135deg, rgba(41,215,100,.16), rgba(52,111,255,.16))"
-    elif "over" in meta_l or "under" in meta_l:
-        acento = "linear-gradient(135deg, rgba(255,145,77,.18), rgba(214,170,76,.16))"
-    elif "btts" in meta_l:
-        acento = "linear-gradient(135deg, rgba(129,92,255,.18), rgba(52,111,255,.16))"
-    elif "corner" in meta_l:
-        acento = "linear-gradient(135deg, rgba(52,111,255,.18), rgba(41,215,100,.14))"
-    elif "tarjet" in meta_l:
-        acento = "linear-gradient(135deg, rgba(255,196,61,.20), rgba(255,145,77,.16))"
-    local, visitante = _extraer_equipos_partido(titulo)
-    logo_local = _get_team_logo_cached(local)
-    logo_visitante = _get_team_logo_cached(visitante)
-    st.markdown(
-        f"""
-        <div style="background:{fondo}; border:1px solid {borde}; border-radius:26px; padding:20px; margin-bottom:18px; box-shadow:0 14px 34px rgba(0,0,0,.22);">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-                <div style="display:flex; align-items:center; gap:12px;">
-                    <div style="width:46px; height:46px; border-radius:999px; background:linear-gradient(135deg, #29d764, #d6aa4c); display:flex; align-items:center; justify-content:center; color:#07111d; font-weight:900; font-size:18px;">JR</div>
-                    <div>
-                        <div style="color:#f5f7fa; font-size:15px; font-weight:800;">Jr AI 11</div>
-                        <div style="color:#8fa1b9; font-size:12px;">Actualizado hace instantes</div>
-                    </div>
-                </div>
-                <div style="color:{color}; font-weight:800; font-size:12px; letter-spacing:1.3px; text-transform:uppercase; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); padding:10px 12px; border-radius:999px;">{etiqueta}</div>
-            </div>
-            <div style="display:flex; justify-content:space-between; gap:14px; align-items:flex-start; flex-wrap:wrap;">
-                <div style="flex:1 1 360px;">
-                    <div style="color:#f5f7fa; font-weight:800; font-size:28px; line-height:1.15;">{titulo}</div>
-                    <div style="color:#c6d0da; font-size:15px; line-height:1.6; margin-top:12px; white-space:pre-line;">{cuerpo}</div>
-                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:14px;">
-                        <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:999px; padding:8px 12px;">
-                            {_team_logo_html(local, logo_local, "linear-gradient(135deg, #29d764, #4f8cff)")}
-                            <div style="color:#dbe5ee; font-size:13px; font-weight:700;">{local or "Local"}</div>
-                        </div>
-                        <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:999px; padding:8px 12px;">
-                            {_team_logo_html(visitante, logo_visitante, "linear-gradient(135deg, #d6aa4c, #ff9150)")}
-                            <div style="color:#dbe5ee; font-size:13px; font-weight:700;">{visitante or "Visitante"}</div>
-                        </div>
-                    </div>
-                </div>
-                <div style="min-width:150px; background:{acento}; border:1px solid rgba(255,255,255,.08); border-radius:20px; padding:14px 16px;">
-                    <div style="color:#8fa1b9; font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase;">Dato clave</div>
-                    <div style="color:#f7fbff; font-size:15px; font-weight:800; margin-top:8px;">{meta_right or "Seguimiento real"}</div>
-                </div>
-            </div>
-            <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:16px;">
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <div style="background:#141d2a; border:1px solid rgba(255,255,255,.06); color:#dce6ef; padding:9px 12px; border-radius:999px; font-size:13px; font-weight:700;">{meta_left or "Publicacion oficial"}</div>
-                    <div style="background:#141d2a; border:1px solid rgba(255,255,255,.06); color:#dce6ef; padding:9px 12px; border-radius:999px; font-size:13px; font-weight:700;">{footer_hint or "Feed privado"}</div>
-                </div>
-                <div style="color:#7f95ad; font-size:13px;">Compartible en Telegram y PDF social</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _market_icon(texto):
-    valor = str(texto or "").lower()
-    if "1x2" in valor:
-        return "1X2"
-    if "over" in valor or "under" in valor:
-        return "Goles"
-    if "btts" in valor:
-        return "BTTS"
-    if "corner" in valor:
-        return "Corners"
-    if "tarjet" in valor:
-        return "Tarjetas"
-    if "handicap" in valor:
-        return "Handicap"
-    return "Pick"
-
-
-def _team_initials(nombre):
-    palabras = [p for p in str(nombre or "").replace("-", " ").split() if p.strip()]
-    if not palabras:
-        return "JR"
-    if len(palabras) == 1:
-        return palabras[0][:2].upper()
-    return (palabras[0][:1] + palabras[1][:1]).upper()
-
-
-def _team_logo_html(nombre, logo_url="", gradient="linear-gradient(135deg, #29d764, #4f8cff)"):
-    logo = str(logo_url or "").strip()
-    iniciales = _team_initials(nombre)
-    if logo:
-        return (
-            f"<div style=\"width:34px; height:34px; border-radius:999px; background:#ffffff; display:flex; "
-            f"align-items:center; justify-content:center; overflow:hidden; border:1px solid rgba(255,255,255,.14);\">"
-            f"<img src=\"{logo}\" style=\"width:100%; height:100%; object-fit:contain; background:#fff;\" /></div>"
-        )
-    return (
-        f"<div style=\"width:34px; height:34px; border-radius:999px; background:{gradient}; display:flex; "
-        f"align-items:center; justify-content:center; color:#07111d; font-weight:900;\">{iniciales}</div>"
-    )
-
-
-def _get_team_logo_cached(team_name):
-    nombre = str(team_name or "").strip()
-    if not nombre:
-        return ""
-    if "team_logo_cache" not in st.session_state:
-        st.session_state.team_logo_cache = {}
-    cache = st.session_state.team_logo_cache
-    if nombre in cache:
-        return cache[nombre]
-    logo_db = get_cached_team_logo(nombre)
-    if logo_db:
-        cache[nombre] = logo_db
-        st.session_state.team_logo_cache = cache
-        return logo_db
-    try:
-        logo = buscar_logo_equipo(nombre)
-    except Exception:
-        logo = ""
-    if logo:
-        save_cached_team_logo(nombre, logo)
-    cache[nombre] = logo or ""
-    st.session_state.team_logo_cache = cache
-    return cache[nombre]
-
-
-def _render_pick_detail(row, section_key):
-    partido = str(row.get("partido", "") or "Partido")
-    mercado = str(row.get("mercado", "") or "Sin mercado")
-    seleccion = str(row.get("seleccion", "") or "Sin seleccion")
-    cuota = float(row.get("cuota", 0) or 0)
-    confianza = int(float(row.get("confianza", 0) or 0) * 100)
-    analisis = str(row.get("analisis_breve", "") or "").strip()
-    ia = str(row.get("ia", "") or "Sistema")
-    competicion = str(row.get("competicion", "") or "").strip()
-    resultado = str(row.get("resultado", "") or "").strip()
-    ganancia = float(row.get("ganancia", 0) or 0)
-    local, visitante = _extraer_equipos_partido(partido)
-    logo_local = row.get("logo_local") or row.get("home_logo") or row.get("team_logo_home") or ""
-    logo_visitante = row.get("logo_visitante") or row.get("away_logo") or row.get("team_logo_away") or ""
-    if not logo_local and local:
-        logo_local = _get_team_logo_cached(local)
-    if not logo_visitante and visitante:
-        logo_visitante = _get_team_logo_cached(visitante)
-    row_id = row.get("id", f"{partido}_{mercado}_{section_key}")
-    with st.expander(f"Ver detalle | {partido} | {mercado}", expanded=False):
-        st.markdown(
-            f"""
-            <div style="background:linear-gradient(135deg, #0f1725, #162234 72%, #192c39); border:1px solid rgba(255,255,255,.06); border-radius:24px; padding:20px; margin-bottom:14px;">
-                <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; align-items:flex-start;">
-                    <div>
-                        <div style="color:#29d764; font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase;">Post del pick</div>
-                        <div style="color:#f7f9fb; font-size:28px; font-weight:900; line-height:1.08; margin-top:8px;">{partido}</div>
-                        <div style="color:#9fb0c5; font-size:15px; margin-top:10px;">{mercado}: {seleccion}</div>
-                        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px;">
-                            <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:999px; padding:8px 12px;">
-                                {_team_logo_html(local, logo_local, "linear-gradient(135deg, #29d764, #4f8cff)")}
-                                <div style="color:#dbe5ee; font-size:13px; font-weight:700;">{local or "Local"}</div>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.06); border-radius:999px; padding:8px 12px;">
-                                {_team_logo_html(visitante, logo_visitante, "linear-gradient(135deg, #d6aa4c, #ff9150)")}
-                                <div style="color:#dbe5ee; font-size:13px; font-weight:700;">{visitante or "Visitante"}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="background:linear-gradient(135deg, rgba(41,215,100,.18), rgba(214,170,76,.18)); border:1px solid rgba(255,255,255,.08); border-radius:20px; padding:14px 16px; min-width:180px;">
-                        <div style="color:#8fa1b9; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Dato destacado</div>
-                        <div style="color:#f7fbff; font-size:16px; font-weight:800; margin-top:8px;">Cuota {cuota:.2f} | Confianza {confianza}%</div>
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        col_d1, col_d2, col_d3 = st.columns(3)
-        col_d1.metric("Mercado", mercado)
-        col_d2.metric("Seleccion", seleccion)
-        col_d3.metric("Cuota", f"{cuota:.2f}")
-        col_d4, col_d5, col_d6 = st.columns(3)
-        col_d4.metric("Confianza", f"{confianza}%")
-        col_d5.metric("Fuente", ia)
-        col_d6.metric("Resultado", resultado or "Pendiente")
-        if competicion:
-            st.caption(f"Competicion: {competicion}")
-        if analisis:
-            st.markdown("**Lectura del pick**")
-            st.write(analisis)
-        if resultado and resultado != "pendiente":
-            st.caption(f"Ganancia registrada: {ganancia:.2f}")
-        try:
-            from pdf_generator import generar_pdf_pick_social, generar_pdf_resultado_social
-            from services.telegram_service import telegram_config_ok, enviar_paquete_telegram
-            resumen = analisis[:220] + ("..." if len(analisis) > 220 else "") if analisis else "Lectura breve del sistema."
-            if resultado and resultado != "pendiente":
-                etiqueta = "WIN"
-                if resultado.lower() == "perdida":
-                    etiqueta = "LOSS"
-                elif resultado.lower() == "media":
-                    etiqueta = "PUSH"
-                copy_social = _copy_resultado_social(row, etiqueta, cuota, ganancia)
-                pdf_social = generar_pdf_resultado_social(row)
-                social_name = f"resultado_social_{row_id}.pdf"
-            else:
-                copy_social = _copy_pick_social(row, resumen, confianza, cuota)
-                pdf_social = generar_pdf_pick_social(row)
-                social_name = f"pick_social_{row_id}.pdf"
-            st.markdown("**Salida social individual**")
-            col_s1, col_s2, col_s3 = st.columns(3)
-            col_s1.download_button(
-                "Descargar copy",
-                copy_social,
-                file_name=f"copy_social_{row_id}.txt",
-                mime="text/plain",
-                key=f"download_copy_{section_key}_{row_id}",
-                use_container_width=True,
-            )
-            col_s2.download_button(
-                "Descargar PDF social",
-                pdf_social,
-                file_name=social_name,
-                mime="application/pdf",
-                key=f"download_pdf_{section_key}_{row_id}",
-                use_container_width=True,
-            )
-            if telegram_config_ok():
-                if col_s3.button("Enviar a Telegram", key=f"send_tg_{section_key}_{row_id}", use_container_width=True):
-                    ok, mensaje = enviar_paquete_telegram(copy_social, pdf_social, social_name, caption=f"{partido} | {mercado}")
-                    if ok:
-                        st.success(mensaje)
-                    else:
-                        st.error(mensaje)
-        except Exception:
-            pass
-
-
-def _render_section_banner(title, text, chip=""):
-    chip_html = (
-        f"<div style='display:inline-block; background:rgba(41,215,100,.10); color:#5bf089; border:1px solid rgba(59,226,111,.16); border-radius:999px; padding:7px 12px; font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;'>{chip}</div>"
-        if chip else ""
-    )
-    st.markdown(
-        f"""
-        <div style="background:linear-gradient(135deg, rgba(255,255,255,.035), rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.06); border-radius:24px; padding:18px 20px; margin-bottom:14px;">
-            {chip_html}
-            <div style="color:#f7f9fb; font-size:22px; font-weight:900;">{title}</div>
-            <div style="color:#9fb0c5; font-size:14px; line-height:1.6; margin-top:6px;">{text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _filtrar_df_por_periodo(df, periodo, fecha_col="fecha"):
-    if df is None or df.empty or fecha_col not in df.columns or periodo == "Todo":
-        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
-    out = df.copy()
-    fechas = pd.to_datetime(out[fecha_col], errors="coerce")
-    hoy = pd.Timestamp(datetime.now().date())
-    if periodo == "7 dias":
-        mask = fechas >= (hoy - pd.Timedelta(days=7))
-    elif periodo == "30 dias":
-        mask = fechas >= (hoy - pd.Timedelta(days=30))
-    elif periodo == "Mes actual":
-        mask = (fechas.dt.year == hoy.year) & (fechas.dt.month == hoy.month)
-    elif periodo == "Ano actual":
-        mask = fechas.dt.year == hoy.year
-    elif periodo == "Mes anterior":
-        base = (hoy - pd.offsets.MonthBegin(1)).to_period("M")
-        mask = fechas.dt.to_period("M") == base
-    elif periodo == "Ano anterior":
-        mask = fechas.dt.year == (hoy.year - 1)
-    else:
-        return out
-    return out[mask.fillna(False)].copy()
-
-
-def _resumen_periodo_dashboard(df_periodo):
-    if df_periodo is None or df_periodo.empty:
-        return {"total": 0, "cerrados": 0, "pendientes": 0, "roi": 0.0, "yield": 0.0, "acierto": 0.0}
-    cerrados = df_periodo[df_periodo["resultado"].isin(["ganada", "perdida", "media"])].copy()
-    pendientes = df_periodo[df_periodo["resultado"] == "pendiente"].copy()
-    ganadas = int((cerrados["resultado"] == "ganada").sum()) if not cerrados.empty else 0
-    medias = int((cerrados["resultado"] == "media").sum()) if not cerrados.empty else 0
-    stake_sum = float(cerrados["stake"].sum()) if not cerrados.empty and "stake" in cerrados.columns else 0
-    gan_sum = float(cerrados["ganancia"].sum()) if not cerrados.empty and "ganancia" in cerrados.columns else 0
-    roi = round((gan_sum / stake_sum) * 100, 2) if stake_sum else 0.0
-    acierto = round(((ganadas + medias / 2) / max(1, len(cerrados))) * 100, 1) if len(cerrados) else 0.0
-    return {
-        "total": len(df_periodo),
-        "cerrados": len(cerrados),
-        "pendientes": len(pendientes),
-        "roi": roi,
-        "yield": roi,
-        "acierto": acierto,
-    }
-
-
 def render_vista_publica():
     usuario_publico = st.session_state.get("public_user")
     if usuario_publico and _session_expired(st.session_state.get("public_last_seen"), PUBLIC_SESSION_MINUTES):
@@ -791,6 +594,27 @@ def render_vista_publica():
         return
 
     st.session_state.public_last_seen = datetime.now().isoformat()
+    
+    # Obtener información de suscripción
+    subscription_info = get_user_subscription(usuario_publico.get("id")) if usuario_publico else None
+    user_plan = subscription_info.get("plan", "free") if subscription_info else "free"
+    is_premium = user_plan in ("premium", "vip")
+    is_vip = user_plan == "vip"
+    
+    # Banner de upgrade para usuarios free
+    if not is_premium:
+        st.markdown(
+            """
+            <div style="background: linear-gradient(135deg, rgba(214,170,76,0.15), rgba(255,145,77,0.1)); border: 1px solid rgba(214,170,76,0.3); border-radius: 20px; padding: 20px; margin-bottom: 20px; text-align: center;">
+                <div style="color: #f7f9fb; font-size: 20px; font-weight: 800;">🔒 Actualiza a Premium</div>
+                <div style="color: #9fb0c5; font-size: 14px; margin-top: 8px;">Obtén acceso completo a análisis detallados, historial ilimitado y alertas instantáneas.</div>
+                <div style="margin-top: 14px;">
+                    <span style="background: linear-gradient(135deg, #d6aa4c, #ff9150); color: #07111d; padding: 12px 24px; border-radius: 12px; font-weight: 800; font-size: 14px;">$19.99/mes</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.markdown(
         """
@@ -922,12 +746,28 @@ def render_vista_publica():
         unsafe_allow_html=True,
     )
 
-    df_publico = get_all_picks(incluir_alternativas=True)
-    metrics = calcular_metricas(incluir_alternativas=False)
+    public_picks_backend_error = False
+    df_publico = fetch_backend_picks(incluir_alternativas=True)
+    if df_publico is None:
+        print("[BACKEND ERROR] picks | public_view | no fallback")
+        public_picks_backend_error = True
+        df_publico = pd.DataFrame()
+    public_backend_error = False
+    metrics = fetch_backend_metrics(incluir_alternativas=False)
+    if metrics is None:
+        print("[BACKEND ERROR] metrics | public_view | no fallback")
+        public_backend_error = True
+        metrics = {}
     total_picks = metrics.get("total_picks", 0)
     acierto = (metrics.get("ganadas", 0) + metrics.get("medias", 0) / 2) / max(1, total_picks) * 100
     roi = metrics.get("roi_global", 0)
     yield_global = metrics.get("yield_global", 0)
+    if public_backend_error:
+        st.warning("⚠️ Datos no disponibles en este momento")
+    total_picks_display = "N/A" if public_backend_error else total_picks
+    acierto_display = "N/A" if public_backend_error else f"{acierto:.1f}%"
+    roi_display = "N/A" if public_backend_error else f"{roi}%"
+    yield_display = "N/A" if public_backend_error else f"{yield_global}%"
 
     pendientes = df_publico[
         (df_publico["tipo_pick"] == "principal")
@@ -937,6 +777,10 @@ def render_vista_publica():
         (df_publico["tipo_pick"] == "principal")
         & (df_publico["resultado"].isin(["ganada", "perdida", "media"]))
     ].copy() if not df_publico.empty else pd.DataFrame()
+    if public_picks_backend_error:
+        st.warning("⚠️ Picks no disponibles en este momento")
+    pendientes_count = "N/A" if public_picks_backend_error else len(pendientes)
+    cerrados_count = "N/A" if public_picks_backend_error else len(cerrados)
 
     st.markdown(
         f"""
@@ -950,16 +794,16 @@ def render_vista_publica():
                 <div style="background:linear-gradient(135deg, #29d764, #d6aa4c); color:#07111d; padding:16px 20px; border-radius:22px; font-weight:900; font-size:18px;">MIEMBRO ACTIVO</div>
             </div>
             <div class="public-kpis">
-                <div class="public-kpi"><div class="public-kpi-label">Picks</div><div class="public-kpi-value">{total_picks}</div></div>
-                <div class="public-kpi"><div class="public-kpi-label">Win Rate</div><div class="public-kpi-value">{acierto:.1f}%</div></div>
-                <div class="public-kpi"><div class="public-kpi-label">ROI</div><div class="public-kpi-value">{roi}%</div></div>
-                <div class="public-kpi"><div class="public-kpi-label">Pendientes</div><div class="public-kpi-value">{len(pendientes)}</div></div>
+                <div class="public-kpi"><div class="public-kpi-label">Picks</div><div class="public-kpi-value">{total_picks_display}</div></div>
+                <div class="public-kpi"><div class="public-kpi-label">Win Rate</div><div class="public-kpi-value">{acierto_display}</div></div>
+                <div class="public-kpi"><div class="public-kpi-label">ROI</div><div class="public-kpi-value">{roi_display}</div></div>
+                <div class="public-kpi"><div class="public-kpi-label">Pendientes</div><div class="public-kpi-value">{pendientes_count}</div></div>
             </div>
             <div class="public-chips">
                 <div class="public-chip public-chip-muted">Picks oficiales</div>
                 <div class="public-chip public-chip-muted">Resultados</div>
                 <div class="public-chip public-chip-muted">Historico</div>
-                <div class="public-chip public-chip-muted">Yield: {yield_global}%</div>
+                <div class="public-chip public-chip-muted">Yield: {yield_display}</div>
                 <div class="public-chip public-chip-muted">{"Miembro activo" if public_logged else "Acceso restringido"}</div>
             </div>
         </div>
@@ -1012,12 +856,9 @@ def render_vista_publica():
         if guardar_perfil:
             ok, mensaje = update_user_profile(usuario_publico["id"], perfil_nombre, perfil_email)
             if ok:
-                usuario_actualizado = authenticate_user(usuario_publico.get("username", ""), st.session_state.get("public_last_password", ""))
-                if usuario_actualizado:
-                    st.session_state.public_user = usuario_actualizado
-                else:
-                    st.session_state.public_user["display_name"] = perfil_nombre
-                    st.session_state.public_user["email"] = perfil_email
+                # Actualizar directamente el usuario en sesión
+                st.session_state.public_user["display_name"] = perfil_nombre
+                st.session_state.public_user["email"] = perfil_email
                 st.success(mensaje)
                 st.rerun()
             else:
@@ -1030,8 +871,10 @@ def render_vista_publica():
         if cambiar_clave:
             ok, mensaje = update_user_password(usuario_publico["id"], clave_actual, clave_nueva)
             if ok:
-                st.session_state.public_last_password = clave_nueva
-                st.success(mensaje)
+                st.success(mensaje + " Por seguridad, vuelve a iniciar sesión.")
+                # Cerrar sesión para forzar re-login con nueva contraseña
+                _clear_public_session()
+                st.rerun()
             else:
                 st.error(mensaje)
 
@@ -1062,30 +905,61 @@ def render_vista_publica():
         else:
             if not pendientes.empty:
                 st.markdown("### Picks activos")
-                limite_pendientes = 6 if public_logged else 2
+                # Límites según plan de suscripción
+                if is_vip:
+                    limite_pendientes = 20
+                elif is_premium:
+                    limite_pendientes = 10
+                else:
+                    limite_pendientes = 3  # Free solo ve 3 picks
+                
+                # Limitar contenido para usuarios free (solo mostrar sin análisis detallado)
+                mostrar_solo_seleccion = not is_premium
+                
                 for _, row in pendientes.head(limite_pendientes).iterrows():
                     cuota = float(row.get("cuota", 0) or 0)
                     confianza = int(float(row.get("confianza", 0) or 0) * 100)
-                    cuerpo = (
-                        f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
-                        f"Cuota: {cuota:.2f}\n"
-                        f"Confianza: {confianza}% | Fuente: {row.get('ia', '')}\n\n"
-                        f"{str(row.get('analisis_breve', '') or '')[:150]}"
-                    )
+                    
+                    if mostrar_solo_seleccion:
+                        # Vista limitada para usuarios free
+                        cuerpo = (
+                            f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
+                            f"Cuota: {cuota:.2f}"
+                        )
+                    else:
+                        # Vista completa para premium
+                        cuerpo = (
+                            f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
+                            f"Cuota: {cuota:.2f}\n"
+                            f"Confianza: {confianza}% | Fuente: {row.get('ia', '')}\n\n"
+                            f"{str(row.get('analisis_breve', '') or '')[:150]}"
+                        )
+                    
                     _render_public_card(
                         str(row.get("partido", "Partido")),
                         cuerpo,
                         "Pick oficial",
                         meta_left=f"{_market_icon(row.get('mercado', ''))} | Cuota {cuota:.2f}",
-                        meta_right=f"Confianza {confianza}%",
-                        footer_hint=str(row.get("ia", "Analista")),
+                        meta_right=f"Confianza {confianza}%" if not mostrar_solo_seleccion else "Ver detalles en Premium",
+                        footer_hint=str(row.get("ia", "Analista")) if not mostrar_solo_seleccion else "Actualiza a Premium",
                     )
-                    _render_pick_detail(row, "feed")
-                if not public_logged and len(pendientes) > limite_pendientes:
-                    st.info("Inicia sesion para ver todos los picks pendientes.")
+                    if is_premium:
+                        _render_pick_detail(row, "feed")
+                
+                if not is_premium and len(pendientes) > limite_pendientes:
+                    st.info("🔒 Actualiza a Premium para ver todos los picks pendientes.")
             if not cerrados.empty:
                 st.markdown("### Ultimos cierres")
-                limite_cerrados = 4 if public_logged else 2
+                # Límites según plan
+                if is_vip:
+                    limite_cerrados = 15
+                elif is_premium:
+                    limite_cerrados = 8
+                else:
+                    limite_cerrados = 3  # Free solo ve 3 resultados
+                    
+                mostrar_solo_resultado = not is_premium
+                
                 for _, row in cerrados.head(limite_cerrados).iterrows():
                     estado = str(row.get("resultado", "")).strip().lower()
                     etiqueta = "WIN"
@@ -1096,23 +970,34 @@ def render_vista_publica():
                     elif estado == "media":
                         etiqueta = "PUSH"
                         tono = "push"
-                    cuerpo = (
-                        f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
-                        f"Cuota: {float(row.get('cuota', 0) or 0):.2f}\n"
-                        f"Ganancia: {float(row.get('ganancia', 0) or 0):.2f}"
-                    )
+                    
+                    if mostrar_solo_resultado:
+                        cuerpo = (
+                            f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
+                            f"Resultado: {etiqueta}"
+                        )
+                        footer = "Ver más en Premium"
+                    else:
+                        cuerpo = (
+                            f"{row.get('mercado', '')}: {row.get('seleccion', '')}\n"
+                            f"Cuota: {float(row.get('cuota', 0) or 0):.2f}\n"
+                            f"Ganancia: {float(row.get('ganancia', 0) or 0):.2f}"
+                        )
+                        footer = str(row.get("ia", "Analista"))
+                    
                     _render_public_card(
                         str(row.get("partido", "Partido")),
                         cuerpo,
                         etiqueta,
                         tono,
                         meta_left=f"{_market_icon(row.get('mercado', ''))} | {etiqueta}",
-                        meta_right=f"Ganancia {float(row.get('ganancia', 0) or 0):.2f}",
-                        footer_hint=str(row.get("ia", "Analista")),
+                        meta_right=f"Ganancia {float(row.get('ganancia', 0) or 0):.2f}" if not mostrar_solo_resultado else f"Ver detalles en Premium",
+                        footer_hint=footer,
                     )
-                    _render_pick_detail(row, "feed")
-                if not public_logged and len(cerrados) > limite_cerrados:
-                    st.info("Accede con tu usuario para ver el historial reciente completo.")
+                    if is_premium:
+                        _render_pick_detail(row, "feed")
+                if not is_premium and len(cerrados) > limite_cerrados:
+                    st.info("🔒 Actualiza a Premium para ver el historial completo de resultados.")
 
     elif member_section == "Pendientes":
         _render_section_banner(
@@ -1120,9 +1005,17 @@ def render_vista_publica():
             "Filtra los picks activos por mercado y revisa el detalle completo antes del cierre.",
             "Pendientes",
         )
-        if not public_logged:
-            st.warning("Pendientes completos solo para usuarios registrados.")
-            st.info("Registrate o inicia sesion para acceder al detalle completo.")
+        if not is_premium:
+            st.warning("🔒 Esta sección es solo para miembros Premium.")
+            st.markdown("""
+            **Beneficios Premium:**
+            - Ver todos los picks pendientes
+            - Filtrar por mercado
+            - Análisis completo de cada pick
+            - Historial ilimitado
+            
+            [Actualiza a Premium por $19.99/mes]
+            """)
         elif pendientes.empty:
             st.info("No hay picks principales pendientes en este momento.")
         else:
@@ -1171,9 +1064,17 @@ def render_vista_publica():
             "Consulta cierres recientes y filtra por estado para revisar la trazabilidad del sistema.",
             "Cierres",
         )
-        if not public_logged:
-            st.warning("Resultados completos solo para usuarios registrados.")
-            st.info("Inicia sesion para seguir todos los cierres y etiquetas del sistema.")
+        if not is_premium:
+            st.warning("🔒 Esta sección es solo para miembros Premium.")
+            st.markdown("""
+            **Beneficios Premium:**
+            - Ver todos los resultados cerrados
+            - Filtrar por estado (ganada/perdida/media)
+            - Análisis completo de cada cierre
+            - Estadísticas detalladas
+            
+            [Actualiza a Premium por $19.99/mes]
+            """)
         elif cerrados.empty:
             st.info("No hay picks cerrados todavia.")
         else:
@@ -1218,9 +1119,18 @@ def render_vista_publica():
             "Sigue la evolucion total del servicio por periodo, junto con metricas de riesgo y rendimiento.",
             "Evolucion",
         )
-        if not public_logged:
-            st.warning("El historico completo es exclusivo para usuarios registrados.")
-            st.info("Crea una cuenta para ver la evolucion del sistema por dia, mes o ano.")
+        if not is_premium:
+            st.warning("🔒 Esta sección es solo para miembros Premium.")
+            st.markdown("""
+            **Beneficios Premium:**
+            - Ver el histórico completo del sistema
+            - Métricas de riesgo (Sharpe, Drawdown)
+            - Evolución por día/mes/año
+            - Estadísticas por IA
+            - Comparativas
+            
+            [Actualiza a Premium por $19.99/mes]
+            """)
         else:
             col_h1, col_h2, col_h3, col_h4 = st.columns(4)
             col_h1.metric("Picks", total_picks)
@@ -1290,19 +1200,31 @@ if not hay_admin:
     )
     col_pad1, col_boot, col_pad2 = st.columns([1, 1.15, 1])
     with col_boot:
+        st.markdown("⚠️ **Solo el primer admin puede crearse con token de seguridad**")
         with st.form("bootstrap_admin_form"):
+            boot_token = st.text_input("Token de bootstrap", type="password", placeholder="Ingresa el token de seguridad")
             boot_user = st.text_input("Usuario admin")
             boot_name = st.text_input("Nombre visible")
             boot_email = st.text_input("Email admin")
             boot_pass = st.text_input("Clave admin", type="password")
             crear_bootstrap = st.form_submit_button("Crear admin inicial", use_container_width=True)
         if crear_bootstrap:
-            ok, mensaje = create_user(boot_user, boot_name, boot_pass, boot_email, role="admin", must_change_password=True)
-            if ok:
-                st.success("Admin creado correctamente. Ahora inicia sesion.")
-                st.rerun()
-            else:
-                st.error(mensaje)
+            import hmac
+            with st.spinner("Creando cuenta inicial..."):
+                if not boot_token or not hmac.compare_digest(str(boot_token), str(BOOTSTRAP_TOKEN)):
+                    st.error("Token de bootstrap incorrecto. Revisa el valor en config.py o consulta con soporte.")
+                elif not boot_user or not boot_pass:
+                    st.error("Usuario y clave son campos obligatorios.")
+                elif len(boot_pass) < 8:
+                    st.error("La clave del administrador debe tener al menos 8 caracteres por seguridad.")
+                else:
+                    ok, mensaje = create_user(boot_user, boot_name, boot_pass, boot_email, role="admin", must_change_password=True)
+                    if ok:
+                        st.success("✓ Admin inicial creado correctamente. Ya puedes iniciar sesion con tus nuevas credenciales.")
+                        st.info("Nota: Se te pedira cambiar la clave temporal en el primer acceso.")
+                        st.rerun()
+                    else:
+                        st.error(f"Error al crear admin: {mensaje}")
     st.stop()
 
 if st.session_state.get("admin_user") and _session_expired(st.session_state.get("admin_last_seen"), ADMIN_SESSION_MINUTES):
@@ -1333,32 +1255,60 @@ panel_activo = "Admin" if st.session_state.get("admin_user") else "Miembro"
 if st.session_state.get("admin_user") and st.session_state.admin_user.get("must_change_password"):
     st.title("Jr AI 11 | Cambio obligatorio de clave")
     st.caption("Por seguridad, cambia la clave temporal del admin antes de seguir.")
+    
+    # Para cambio obligatorio, pedimos la clave actual (o se puede omitir si es temporal)
+    clave_actual = st.text_input("Clave actual (deja vacio si es temporal)", type="password", key="admin_current_password_force")
     nueva_admin_pass = st.text_input("Nueva clave admin", type="password", key="admin_force_new_password")
     confirmar_admin_pass = st.text_input("Confirma la nueva clave", type="password", key="admin_force_confirm_password")
+    
     if st.button("Actualizar clave admin"):
         if not nueva_admin_pass or len(nueva_admin_pass) < 8:
             st.error("La nueva clave debe tener al menos 8 caracteres.")
         elif nueva_admin_pass != confirmar_admin_pass:
             st.error("La confirmacion no coincide.")
         else:
-            ok, mensaje = update_user_password(
-                st.session_state.admin_user["id"],
-                st.session_state.get("admin_last_password", ""),
-                nueva_admin_pass,
-            )
-            if ok:
-                st.session_state.admin_last_password = nueva_admin_pass
-                user = authenticate_user(
-                    st.session_state.admin_user.get("username", ""),
+            # Verificar si es la primera vez (password temporal) - permitir cambio sin verificación
+            if st.session_state.admin_user.get("must_change_password"):
+                # Cambio forzado - actualizar directamente
+                from database import _hash_password
+                from database import get_conn
+                try:
+                    with get_conn() as conn:
+                        conn.execute(
+                            "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+                            (_hash_password(nueva_admin_pass), st.session_state.admin_user["id"]),
+                        )
+                    # Re-autenticar
+                    user = authenticate_user(
+                        st.session_state.admin_user.get("username", ""),
+                        nueva_admin_pass,
+                    )
+                    if user:
+                        st.session_state.admin_user = user
+                    st.session_state.admin_last_seen = datetime.now().isoformat()
+                    st.success("Clave admin actualizada. Ya puedes entrar al panel.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al actualizar: {e}")
+            else:
+                # Cambio normal con verificación
+                ok, mensaje = update_user_password(
+                    st.session_state.admin_user["id"],
+                    clave_actual,
                     nueva_admin_pass,
                 )
-                if user:
-                    st.session_state.admin_user = user
-                st.session_state.admin_last_seen = datetime.now().isoformat()
-                st.success("Clave admin actualizada. Ya puedes entrar al panel.")
-                st.rerun()
-            else:
-                st.error(mensaje)
+                if ok:
+                    user = authenticate_user(
+                        st.session_state.admin_user.get("username", ""),
+                        nueva_admin_pass,
+                    )
+                    if user:
+                        st.session_state.admin_user = user
+                    st.session_state.admin_last_seen = datetime.now().isoformat()
+                    st.success("Clave admin actualizada. Ya puedes entrar al panel.")
+                    st.rerun()
+                else:
+                    st.error(mensaje)
     st.stop()
 
 if st.session_state.get("public_user") and not st.session_state.get("admin_user"):
@@ -1406,10 +1356,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-try:
-    _df_admin_overview = get_all_picks(incluir_alternativas=True)
-except Exception:
-    _df_admin_overview = pd.DataFrame()
+admin_overview_backend_error = False
+_df_admin_overview = fetch_backend_picks(incluir_alternativas=True)
+if _df_admin_overview is None:
+    print("[BACKEND ERROR] picks | admin_overview | no fallback")
+    admin_overview_backend_error = True
+    _df_admin_overview = normalize_backend_picks_df(pd.DataFrame())
+if admin_overview_backend_error:
+    st.warning("⚠️ Resumen de picks no disponible (backend no responde)")
 
 _pend_admin = _df_admin_overview[
     (_df_admin_overview["tipo_pick"] == "principal") & (_df_admin_overview["resultado"] == "pendiente")
@@ -1418,7 +1372,11 @@ _cerr_admin = _df_admin_overview[
     (_df_admin_overview["tipo_pick"] == "principal") & (_df_admin_overview["resultado"].isin(["ganada", "perdida", "media"]))
 ].copy() if not _df_admin_overview.empty else pd.DataFrame()
 _users_count = len(df_usuarios) if not df_usuarios.empty else 0
-_admin_kpis = calcular_metricas(incluir_alternativas=False)
+_admin_kpis = fetch_backend_metrics(incluir_alternativas=False)
+if _admin_kpis is None:
+    print("[BACKEND ERROR] metrics | admin_header | no fallback")
+    _admin_kpis = {}
+    st.warning("⚠️ Datos no disponibles (backend no responde)")
 
 st.markdown(
     f"""
@@ -1447,26 +1405,31 @@ st.markdown(
 # ============================================
 # PESTANAS
 # ============================================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
-    "Panel General",
-    "Carga de Picks",
-    "Registro de Resultados",
-    "Base y Exportacion",
-    "Consulta de Cuotas",
-    "Preparar Partido",
-    "Analisis Automatico",
-    "Consenso Ponderado",
-    "Aprendizaje",
-    "Comparativa Espejo",
+tab_dash, tab_picks, tab_operacion, tab_pub, tab_lab, tab_users = st.tabs([
+    "Dashboard",
+    "Mis Picks",
+    "Operación",
+    "Publicación",
+    "Laboratorio",
     "Usuarios",
-    "Motor Propio"
 ])
 
 # ====================== DASHBOARD ======================
-with tab1:
+with tab_dash:
     incluir_alternativas = st.checkbox("Incluir picks alternativos en las metricas", value=False)
-    metrics = calcular_metricas(incluir_alternativas=incluir_alternativas)
-    df_dash = get_all_picks(incluir_alternativas=incluir_alternativas)
+    dashboard_backend_error = False
+    metrics = fetch_backend_metrics(incluir_alternativas=incluir_alternativas)
+    if metrics is None:
+        print("[BACKEND ERROR] metrics | dashboard | no fallback")
+        dashboard_backend_error = True
+        metrics = {}
+    df_dash = fetch_backend_picks(incluir_alternativas=incluir_alternativas)
+    if df_dash is None:
+        print("[BACKEND ERROR] picks | dashboard | no fallback")
+        dashboard_backend_error = True
+        df_dash = pd.DataFrame()
+    if dashboard_backend_error:
+        st.warning("⚠️ Dashboard no disponible: backend no responde")
     periodo_dash = st.selectbox(
         "Periodo del dashboard",
         ["Todo", "7 dias", "30 dias", "Mes actual", "Ano actual"],
@@ -1497,7 +1460,7 @@ with tab1:
                 </div>
                 <div style="background:linear-gradient(135deg, rgba(41,215,100,.16), rgba(214,170,76,.16)); border:1px solid rgba(255,255,255,.08); border-radius:20px; padding:14px 16px; min-width:180px;">
                     <div style="color:#8fa1b9; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px;">Estado actual</div>
-                    <div style="color:#f7fbff; font-size:18px; font-weight:900; margin-top:8px;">{len(picks_pendientes_dash)} pendientes | {len(picks_cerrados_dash)} cerrados</div>
+                    <div style="color:#f7fbff; font-size:18px; font-weight:900; margin-top:8px;">{"N/A" if dashboard_backend_error else f"{len(picks_pendientes_dash)} pendientes | {len(picks_cerrados_dash)} cerrados"}</div>
                 </div>
             </div>
         </div>
@@ -1506,33 +1469,34 @@ with tab1:
     )
 
     col1, col2, col3, col4 = st.columns(4)
-    bankroll_cop = metrics['bankroll_actual']
+    bankroll_cop = metrics.get('bankroll_actual', 0)
     bankroll_inicial = get_bankroll_inicial()
     delta_pct = ((bankroll_cop / bankroll_inicial) - 1) * 100
-    col1.metric("Bankroll Actual", mostrar_valor(bankroll_cop), f"{delta_pct:+.1f}%")
+    col1.metric("Bankroll Actual", "N/A" if dashboard_backend_error else mostrar_valor(bankroll_cop), "N/A" if dashboard_backend_error else f"{delta_pct:+.1f}%")
     total_picks_dash = len(df_dash_periodo)
     ganadas_dash = int((picks_cerrados_dash["resultado"] == "ganada").sum()) if not picks_cerrados_dash.empty else 0
     medias_dash = int((picks_cerrados_dash["resultado"] == "media").sum()) if not picks_cerrados_dash.empty else 0
-    col2.metric("Total Picks", total_picks_dash)
+    col2.metric("Total Picks", "N/A" if dashboard_backend_error else total_picks_dash)
     acierto_ponderado = (ganadas_dash + medias_dash/2) / max(1, len(picks_cerrados_dash)) * 100 if len(picks_cerrados_dash) else 0
-    col3.metric("Acierto", f"{acierto_ponderado:.1f}%")
+    col3.metric("Acierto", "N/A" if dashboard_backend_error else f"{acierto_ponderado:.1f}%")
     roi_dash = round(float(picks_cerrados_dash["ganancia"].sum() / picks_cerrados_dash["stake"].sum() * 100), 2) if not picks_cerrados_dash.empty and picks_cerrados_dash["stake"].sum() else 0
-    col4.metric("ROI Global", f"{roi_dash}%")
+    col4.metric("ROI Global", "N/A" if dashboard_backend_error else f"{roi_dash}%")
     col1b, col2b, col3b, col4b = st.columns(4)
-    col1b.metric("Yield", f"{roi_dash}%")
-    col2b.metric("Pendientes", len(picks_pendientes_dash))
-    col3b.metric("Cerrados", len(picks_cerrados_dash))
-    if not metrics['df_ia'].empty and "roi" in metrics["df_ia"].columns:
-        df_ia_sorted = metrics["df_ia"].sort_values("roi", ascending=False)
+    col1b.metric("Yield", "N/A" if dashboard_backend_error else f"{roi_dash}%")
+    col2b.metric("Pendientes", "N/A" if dashboard_backend_error else len(picks_pendientes_dash))
+    col3b.metric("Cerrados", "N/A" if dashboard_backend_error else len(picks_cerrados_dash))
+    df_ia = metrics.get('df_ia', pd.DataFrame())
+    if not df_ia.empty and "roi" in df_ia.columns:
+        df_ia_sorted = df_ia.sort_values("roi", ascending=False)
         ia_top = str(df_ia_sorted.iloc[0].get("ia", "-"))
         roi_ia_top = float(df_ia_sorted.iloc[0].get("roi", 0) or 0)
     else:
         ia_top = "-"
         roi_ia_top = 0
-    col4b.metric("IA top", ia_top, f"{roi_ia_top:.1f}%")
+    col4b.metric("IA top", "N/A" if dashboard_backend_error else ia_top, "N/A" if dashboard_backend_error else f"{roi_ia_top:.1f}%")
 
     st.subheader("Metricas avanzadas de riesgo")
-    riesgo = metrics['metricas_riesgo']
+    riesgo = metrics.get('metricas_riesgo', {})
     if riesgo:
         col_risk1, col_risk2, col_risk3, col_risk4 = st.columns(4)
         col_risk1.metric("Sharpe Ratio", f"{riesgo['sharpe_ratio']:.2f}")
@@ -1548,23 +1512,24 @@ with tab1:
         else:
             st.warning("El rendimiento observado aun no alcanza significancia estadistica (p >= 0.05).")
     else:
-        st.info("No hay informacion suficiente para calcular metricas de riesgo.")
+        _render_empty_state("Sin métricas de riesgo", "No hay información suficiente para calcular el Sharpe Ratio, Drawdown o Profit Factor.", "📊")
 
     colA, colB = st.columns(2)
     with colA:
-        if not metrics['evolucion'].empty:
-            fig_bank = px.line(metrics['evolucion'], x='fecha', y='bankroll',
+        evolucion_df = metrics.get('evolucion', pd.DataFrame())
+        if not evolucion_df.empty:
+            fig_bank = px.line(evolucion_df, x='fecha', y='bankroll',
                                title="Evolucion del Bankroll", markers=True)
             st.plotly_chart(fig_bank, width='stretch')
         else:
-            st.info("No hay informacion suficiente para visualizar la evolucion del bankroll.")
+            _render_empty_state("Sin historial de bankroll", "Se requiere al menos un pick cerrado para visualizar la evolución.", "📈")
     with colB:
-        if not metrics['df_ia'].empty:
-            fig_roi = px.bar(metrics['df_ia'], x='ia', y='roi',
+        if not df_ia.empty:
+            fig_roi = px.bar(df_ia, x='ia', y='roi',
                              title="ROI por IA", color='roi', color_continuous_scale='RdYlGn')
             st.plotly_chart(fig_roi, width='stretch')
         else:
-            st.info("No hay informacion suficiente para calcular ROI por IA.")
+            _render_empty_state("Sin ROI por IA", "No hay datos de rendimiento por modelo todavía.", "🤖")
 
     colC, colD = st.columns(2)
     with colC:
@@ -1612,7 +1577,9 @@ with tab1:
         cmp4.metric("Pendientes actual vs comparado", resumen_actual["pendientes"], f"{resumen_actual['pendientes'] - resumen_compare['pendientes']:+d}")
 
 # ====================== IMPORTAR PICKS ======================
-with tab2:
+with tab_picks:
+    st.divider()
+    st.header("Carga Manual de Picks")
     st.subheader("Carga de archivos de picks")
     st.markdown("Formato esperado: IA, FECHA, ---, PARTIDO, MERCADO, SELECCION, CUOTA, CONFIANZA, ANALISIS (o JSON estructurado)")
 
@@ -1672,58 +1639,69 @@ with tab2:
 
     if guardar_manual:
         if not pm_partido.strip() or not pm_mercado.strip() or not pm_seleccion.strip():
-            st.warning("Completa al menos partido, mercado y seleccion.")
+            st.warning("Completa al menos partido, mercado y seleccion para registrar el pick.")
         else:
             try:
-                df_manual = pd.DataFrame([
-                    {
-                        "ia": pm_ia.strip() or "Manual",
-                        "fecha": pm_fecha.strip() or datetime.now().strftime("%Y-%m-%d"),
-                        "partido": pm_partido.strip(),
-                        "mercado": pm_mercado.strip(),
-                        "seleccion": pm_seleccion.strip(),
-                        "cuota": pm_cuota,
-                        "confianza": pm_confianza,
-                        "analisis_breve": pm_analisis.strip(),
-                        "competicion": pm_competicion.strip() or None,
-                        "tipo_pick": pm_tipo,
-                    }
-                ])
-                batch_manual = datetime.now().strftime("%Y%m%d_%H%M%S") + "_manual"
-                resultado_manual = save_picks(df_manual, batch_manual)
-                insertados = resultado_manual.get("insertados", 0) if isinstance(resultado_manual, dict) else 0
-                duplicados = resultado_manual.get("duplicados", 0) if isinstance(resultado_manual, dict) else 0
-                if insertados > 0:
-                    pick_publicado = None
-                    if pm_tipo == "principal":
-                        df_lote = get_all_picks(incluir_alternativas=True)
-                        lote = df_lote[df_lote["import_batch"] == batch_manual].copy() if not df_lote.empty and "import_batch" in df_lote.columns else pd.DataFrame()
-                        if not lote.empty:
-                            pick_publicado = lote.iloc[0].to_dict()
-                    st.success(
-                        f"Pick manual guardado. Insertados: {insertados} | Duplicados: {duplicados} | batch: {batch_manual}"
-                    )
-                    if pick_publicado:
-                        auto_pub = _enviar_pick_telegram_si_activo(pick_publicado)
-                        if auto_pub:
-                            ok, mensaje = auto_pub
-                            if ok:
-                                st.success(f"Auto-publicacion Telegram: {mensaje}")
-                            else:
-                                st.warning(mensaje)
-                else:
-                    st.warning(
-                        f"No se insertaron picks nuevos. Duplicados detectados: {duplicados}."
-                    )
-                st.rerun()
+                with st.spinner("Guardando pick manual..."):
+                    df_manual = pd.DataFrame([
+                        {
+                            "ia": pm_ia.strip() or "Manual",
+                            "fecha": pm_fecha.strip() or datetime.now().strftime("%Y-%m-%d"),
+                            "partido": pm_partido.strip(),
+                            "mercado": pm_mercado.strip(),
+                            "seleccion": pm_seleccion.strip(),
+                            "cuota": pm_cuota,
+                            "confianza": pm_confianza,
+                            "analisis_breve": pm_analisis.strip(),
+                            "tipo_pick": pm_tipo,
+                            "resultado": "pendiente"
+                        }
+                    ])
+                    batch_manual = f"manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    resultado_save = save_picks(df_manual, batch_manual)
+                    insertados = resultado_save.get("insertados", 0) if isinstance(resultado_save, dict) else 0
+                    
+                     if insertados > 0:
+                         st.success(f"✓ Pick manual {'alternativo' if pm_tipo == 'alternativa' else 'principal'} guardado correctamente.")
+                         # Intentar auto-publicar si es principal
+                         lote_backend_error = False
+                         df_lote = fetch_backend_picks(incluir_alternativas=True)
+                         if df_lote is None:
+                             lote_backend_error = True
+                             df_lote = normalize_backend_picks_df(pd.DataFrame())
+                         if lote_backend_error:
+                             st.error("Auto-publicación no disponible: backend no responde")
+                         else:
+                            lote = df_lote[df_lote["import_batch"] == batch_manual].copy() if not df_lote.empty and "import_batch" in df_lote.columns else pd.DataFrame()
+                            if not lote.empty:
+                                pick_pub = lote.iloc[0].to_dict()
+                                auto_pub = _enviar_pick_telegram_si_activo(pick_pub)
+                                if auto_pub:
+                                    ok, mens = auto_pub
+                                    if ok: st.success(f"Auto-publicacion Telegram: {mens}")
+                                    else: st.warning(mens)
+                    else:
+                        st.warning("No se pudo insertar el pick. Puede que ya exista un registro identico.")
+                    st.rerun()
             except Exception as e:
-                st.error(f"No se pudo guardar el pick manual: {e}")
+                st.error(f"Fallo critico al guardar el pick manual: {e}")
 
 # ====================== REGISTRAR RESULTADOS ======================
-with tab3:
-    df = get_all_picks(incluir_alternativas=True)
+    st.divider()
+    st.header("Resultados de Picks")
+    picks_backend_error = False
+    df = fetch_backend_picks(incluir_alternativas=True)
+    if df is None:
+        print("[BACKEND ERROR] picks | tab_picks | no fallback")
+        picks_backend_error = True
+        df = pd.DataFrame()
+    if picks_backend_error:
+        st.warning("⚠️ Datos de picks no disponibles (backend no responde)")
     if df.empty:
-        st.info("Aun no hay picks registrados. Carga informacion primero desde la pestana de picks.")
+        if picks_backend_error:
+            st.info("Datos no disponibles temporalmente.")
+        else:
+            st.info("Aun no hay picks registrados. Carga informacion primero desde la pestana de picks.")
     else:
         _render_section_banner(
             "Registro de resultados",
@@ -1863,9 +1841,16 @@ with tab3:
                             update_resultado_con_cuota(row['id'], nuevo, cuota_real)
                             if cache_key in st.session_state.cuotas_cache:
                                 del st.session_state.cuotas_cache[cache_key]
-                            st.success(f"Registro actualizado: {row['seleccion']} -> {nuevo} @ {cuota_real}")
-                            actualizado = get_all_picks(incluir_alternativas=True)
-                            if not actualizado.empty and "id" in actualizado.columns:
+                            st.success(f"Registro actualizado: {row['seleccion']} -> {nuevo} @ {cuota_real_input}")
+                            actualizado_backend_error = False
+                            actualizado = fetch_backend_picks(incluir_alternativas=True)
+                            if actualizado is None:
+                                actualizado_backend_error = True
+                                actualizado = normalize_backend_picks_df(pd.DataFrame())
+                            if actualizado_backend_error:
+                                st.error("Auto-publicación no disponible: backend no responde")
+                            else:
+                                if not actualizado.empty and "id" in actualizado.columns:
                                 fila_act = actualizado[actualizado["id"] == row["id"]]
                                 if not fila_act.empty:
                                     auto_pub = _enviar_resultado_telegram_si_activo(fila_act.iloc[0].to_dict())
@@ -1880,7 +1865,7 @@ with tab3:
                     st.divider()
 
 # ====================== DETALLE & EXPORT ======================
-with tab4:
+with tab_pub:
     from pdf_generator import (
         recopilar_todos_los_picks,
         generar_pdf,
@@ -1902,7 +1887,14 @@ with tab4:
         "Convierte picks y resultados en piezas listas para compartir por Telegram, PDF o base operativa.",
         "Publicacion",
     )
-    df_publicacion = get_all_picks(incluir_alternativas=True)
+    publicacion_backend_error = False
+    df_publicacion = fetch_backend_picks(incluir_alternativas=True)
+    if df_publicacion is None:
+        print("[BACKEND ERROR] picks | publicacion | no fallback")
+        publicacion_backend_error = True
+        df_publicacion = normalize_backend_picks_df(pd.DataFrame())
+    if publicacion_backend_error:
+        st.warning("⚠️ Picks no disponibles para publicación (backend no responde)")
     if not df_publicacion.empty:
         pub_pendientes = int(((df_publicacion["tipo_pick"] == "principal") & (df_publicacion["resultado"] == "pendiente")).sum())
         pub_cerrados = int(((df_publicacion["tipo_pick"] == "principal") & (df_publicacion["resultado"].isin(["ganada", "perdida", "media"]))).sum())
@@ -1941,6 +1933,10 @@ with tab4:
                 cuota_rapida = float(pick_rapido.get("cuota", 0) or 0)
                 resumen_rapido = str(pick_rapido.get("analisis_breve", "") or "").strip()
                 resumen_rapido = resumen_rapido[:220] + ("..." if len(resumen_rapido) > 220 else "")
+                pick_rapido_complete = all(pick_rapido.get(k) for k in ["partido", "mercado", "seleccion", "cuota", "confianza"])
+                if not pick_rapido_complete or publicacion_backend_error:
+                    st.error("No se puede publicar: datos del pick incompletos o backend no responde.")
+                    st.stop()
                 st.write(
                     f"**{pick_rapido.get('partido', '')}**  \n"
                     f"{pick_rapido.get('mercado', '')}: {pick_rapido.get('seleccion', '')} @ {cuota_rapida:.2f}"
@@ -1978,6 +1974,10 @@ with tab4:
                     etiqueta_res_rapida = "LOSS"
                 elif estado_res_rapido == "media":
                     etiqueta_res_rapida = "PUSH"
+                resultado_rapido_complete = all(resultado_rapido.get(k) for k in ["partido", "mercado", "seleccion", "resultado", "cuota_real", "ganancia"])
+                if not resultado_rapido_complete or publicacion_backend_error:
+                    st.error("No se puede publicar: datos del resultado incompletos o backend no responde.")
+                    st.stop()
                 st.write(
                     f"**{resultado_rapido.get('partido', '')}**  \n"
                     f"{resultado_rapido.get('mercado', '')}: {resultado_rapido.get('seleccion', '')} | {etiqueta_res_rapida}"
@@ -2009,7 +2009,14 @@ with tab4:
 
     st.markdown("---")
     st.subheader("Pick oficial del dia")
-    df_pick_oficial = get_all_picks(incluir_alternativas=True)
+    pick_oficial_backend_error = False
+    df_pick_oficial = fetch_backend_picks(incluir_alternativas=True)
+    if df_pick_oficial is None:
+        print("[BACKEND ERROR] picks | pick_oficial | no fallback")
+        pick_oficial_backend_error = True
+        df_pick_oficial = normalize_backend_picks_df(pd.DataFrame())
+    if pick_oficial_backend_error:
+        st.warning("⚠️ Picks no disponibles para pick oficial (backend no responde)")
     if not df_pick_oficial.empty:
         df_pick_oficial = df_pick_oficial[
             (df_pick_oficial["tipo_pick"] == "principal") & (df_pick_oficial["resultado"] == "pendiente")
@@ -2024,6 +2031,10 @@ with tab4:
             )
             opcion_pick = st.selectbox("Selecciona el pick a convertir", df_pick_oficial["label_pick"].tolist())
             pick_seleccionado = df_pick_oficial[df_pick_oficial["label_pick"] == opcion_pick].iloc[0].to_dict()
+            pick_data_complete = all(pick_seleccionado.get(k) for k in ["partido", "mercado", "seleccion", "cuota", "confianza"])
+            if not pick_data_complete or pick_oficial_backend_error:
+                st.error("No se puede publicar: datos del pick incompletos o backend no responde.")
+                st.stop()
 
             col_p1, col_p2 = st.columns(2)
             titulo_pick = col_p1.text_input("Titulo del pick", value="Jr AI 11 - Pick Oficial")
@@ -2128,7 +2139,14 @@ with tab4:
 
     st.markdown("---")
     st.subheader("Post de resultado")
-    df_resultado_post = get_all_picks(incluir_alternativas=True)
+    resultado_post_backend_error = False
+    df_resultado_post = fetch_backend_picks(incluir_alternativas=True)
+    if df_resultado_post is None:
+        print("[BACKEND ERROR] picks | resultado_post | no fallback")
+        resultado_post_backend_error = True
+        df_resultado_post = normalize_backend_picks_df(pd.DataFrame())
+    if resultado_post_backend_error:
+        st.warning("⚠️ Picks no disponibles para post de resultado (backend no responde)")
     if not df_resultado_post.empty:
         df_resultado_post = df_resultado_post[
             (df_resultado_post["tipo_pick"] == "principal")
@@ -2150,6 +2168,10 @@ with tab4:
             pick_cerrado = df_resultado_post[
                 df_resultado_post["label_resultado"] == opcion_resultado
             ].iloc[0].to_dict()
+            resultado_data_complete = all(pick_cerrado.get(k) for k in ["partido", "resultado", "cuota_real", "ganancia"])
+            if not resultado_data_complete or resultado_post_backend_error:
+                st.error("No se puede publicar: datos del resultado incompletos o backend no responde.")
+                st.stop()
 
             titulo_resultado = "Jr AI 11 - Resultado del Pick"
             estado_resultado = str(pick_cerrado.get("resultado", "")).strip().lower()
@@ -2256,7 +2278,14 @@ with tab4:
 
     st.markdown("---")
     st.subheader("Boletin compartible desde la base")
-    df_boletin = get_all_picks(incluir_alternativas=True)
+    boletin_backend_error = False
+    df_boletin = fetch_backend_picks(incluir_alternativas=True)
+    if df_boletin is None:
+        print("[BACKEND ERROR] picks | boletin | no fallback")
+        boletin_backend_error = True
+        df_boletin = normalize_backend_picks_df(pd.DataFrame())
+    if boletin_backend_error:
+        st.warning("⚠️ Picks no disponibles para boletín (backend no responde)")
     if not df_boletin.empty:
         col_b1, col_b2, col_b3 = st.columns(3)
         tipo_boletin = col_b1.selectbox("Tipo de picks", ["Solo principales", "Solo alternativos", "Todos"], key="boletin_tipo")
@@ -2276,12 +2305,17 @@ with tab4:
         if estado_boletin == "Solo pendientes":
             df_export = df_export[df_export["resultado"] == "pendiente"]
 
+        df_export_valido = df_export.dropna(subset=['partido', 'mercado', 'seleccion', 'cuota'])
+        if not df_export.empty and df_export_valido.empty:
+            st.error("No se puede generar PDF: picks sin datos mínimos (partido/mercado/seleccion/cuota).")
+            st.stop()
+
         if df_export.empty:
             st.info("No hay picks en la base con ese filtro para generar boletin.")
         else:
             st.caption(f"Picks incluidos en el boletin: {len(df_export)}")
             if st.button("Generar PDF desde la base"):
-                with st.spinner("Preparando boletin PDF..."):
+                with st.spinner("Preparando boletin PDF consolidado..."):
                     try:
                         pdf_base = generar_pdf_desde_dataframe(
                             df_export,
@@ -2289,6 +2323,7 @@ with tab4:
                             subtitulo=subtitulo_boletin,
                         )
                         fecha_pdf = datetime.now().strftime("%Y%m%d_%H%M")
+                        st.success("✓ Boletin PDF generado con exito.")
                         st.download_button(
                             "Descargar boletin PDF",
                             data=pdf_base,
@@ -2296,18 +2331,18 @@ with tab4:
                             mime="application/pdf",
                         )
                         if telegram_config_ok():
-                            ok, mensaje = enviar_documento_telegram(
-                                pdf_base,
-                                f"boletin_picks_{fecha_pdf}.pdf",
-                                caption=titulo_boletin,
-                            )
+                            with st.spinner("Enviando boletin a Telegram..."):
+                                ok, mensaje = enviar_documento_telegram(
+                                    pdf_base,
+                                    f"boletin_picks_{fecha_pdf}.pdf",
+                                    caption=titulo_boletin,
+                                )
                             if ok:
-                                st.success(f"Boletin PDF generado y enviado a Telegram.")
+                                st.success("✓ Boletin tambien enviado a Telegram.")
                             else:
-                                st.warning(f"Boletin generado, pero Telegram fallo: {mensaje}")
-                        st.success("Boletin PDF generado correctamente desde la base.")
+                                st.warning(f"Boletin generado, pero fallo el envio a Telegram: {mensaje}")
                     except Exception as e:
-                        st.error(f"Error al generar el boletin desde la base: {e}")
+                        st.error(f"Fallo critico al generar o exportar el boletin: {e}")
     else:
         st.info("Todavia no hay picks en la base para generar un boletin compartible.")
 
@@ -2337,7 +2372,14 @@ with tab4:
 
     st.markdown("---")
     st.subheader("Base detallada de registros")
-    df = get_all_picks(incluir_alternativas=True)
+    pub_base_backend_error = False
+    df = fetch_backend_picks(incluir_alternativas=True)
+    if df is None:
+        print("[BACKEND ERROR] picks | pub_base | no fallback")
+        pub_base_backend_error = True
+        df = normalize_backend_picks_df(pd.DataFrame())
+    if pub_base_backend_error:
+        st.warning("⚠️ Base detallada no disponible (backend no responde)")
     if not df.empty:
         base_cols = st.columns([1.1, 1.1, 1.4])
         tipo_filtro = base_cols[0].selectbox("Filtrar por tipo", ["Todos", "Principales", "Alternativas"])
@@ -2373,141 +2415,23 @@ with tab4:
                 st.success("Base de datos reseteada")
                 st.rerun()
     else:
-        st.info("No hay datos disponibles. Carga picks para continuar.")
-
-# ====================== CUOTAS REALES ======================
-with tab5:
-    st.subheader("Consulta operativa de cuotas")
-
-    from obtener_cuotas_api import obtener_ligas_futbol, obtener_cuotas_de_liga, obtener_creditos_restantes
-    from config import ODDS_API_KEY
-
-    if 'liga_actual' not in st.session_state:
-        st.session_state.liga_actual = None
-    if 'partidos_disponibles' not in st.session_state:
-        st.session_state.partidos_disponibles = []
-    if 'busqueda_realizada' not in st.session_state:
-        st.session_state.busqueda_realizada = False
-    if 'nombre_buscado' not in st.session_state:
-        st.session_state.nombre_buscado = ""
-
-    if not ODDS_API_KEY:
-        st.error("No has configurado la API key de The Odds API. Revisa el archivo .env.")
-        st.stop()
-
-    # Deteccion automatica de liga
-    nombre_partido_input = st.text_input("Nombre del partido (ej: Atletico Nacional vs Millonarios)", key="nombre_input_cuotas")
-    if nombre_partido_input:
-        liga_detectada_key, liga_detectada_nombre = detectar_liga_automatica(nombre_partido_input)
-        if liga_detectada_key:
-            st.success(f"Liga detectada automaticamente: **{liga_detectada_nombre}**")
-
-    with st.spinner("Cargando ligas..."):
-        ligas = obtener_ligas_futbol()
-        if ligas is None:
-            st.error("Error al cargar ligas. Revisa tu conexion o API key.")
-            st.stop()
+        if pub_base_backend_error:
+            st.info("Base no disponible temporalmente.")
         else:
-            nombres_ligas = [f"{liga['title']} ({liga['key']})" for liga in ligas]
-            nombres_ligas.insert(0, "Liga BetPlay (soccer_colombia_primera_a)")
-            nombres_ligas.insert(1, "Primera B (soccer_colombia_primera_b)")
-            nombres_ligas.insert(2, "Champions League (soccer_uefa_champions_league)")
-            nombres_ligas.insert(3, "Copa Libertadores (soccer_conmebol_libertadores)")
-
-            # Si se detecto automaticamente, preseleccionar
-            idx_default = 0
-            if nombre_partido_input and liga_detectada_key:
-                for i, nl in enumerate(nombres_ligas):
-                    if liga_detectada_key in nl:
-                        idx_default = i
-                        break
-
-            liga_seleccionada = st.selectbox("Liga", nombres_ligas, index=idx_default, key="liga_selector")
-            liga_key = liga_seleccionada.split('(')[-1].strip(')')
-
-            region = st.selectbox("Region", ["eu", "uk", "us", "au"],
-                                  help="'eu' para casas europeas como Betsson. 'uk' para Bet365.")
-            bookmaker_filtro = st.text_input("Casa de apuestas (vacio = todas)")
-            st.session_state.bookmaker_filtro = bookmaker_filtro.strip()
-            nombre_partido = nombre_partido_input or st.text_input("Nombre del partido", key="nombre_input2")
-
-            if st.button("Buscar partido"):
-                st.session_state.busqueda_realizada = True
-                st.session_state.nombre_buscado = nombre_partido
-                st.session_state.liga_actual = liga_key
-                st.session_state.region_actual = region
-                st.session_state.partidos_disponibles = []
-                st.rerun()
-
-            if st.session_state.busqueda_realizada and st.session_state.liga_actual == liga_key:
-                with st.spinner(f"Buscando..."):
-                    archivo, error, partidos = obtener_cuotas_de_liga(
-                        st.session_state.liga_actual,
-                        st.session_state.nombre_buscado,
-                        region=st.session_state.region_actual,
-                        bookmaker_filtro=st.session_state.get("bookmaker_filtro", "")
-                    )
-                    if archivo:
-                        st.success(f"Partido localizado. Archivo generado: {archivo}")
-                        with open(archivo, "rb") as f:
-                            st.download_button("Descargar archivo", f, archivo, "text/plain")
-                        with open(archivo, "r", encoding="utf-8") as f:
-                            st.text_area("Vista previa:", f.read(), height=300)
-                        st.session_state.busqueda_realizada = False
-                    elif partidos:
-                        st.warning(f"No se encontro '{st.session_state.nombre_buscado}'.")
-                        st.info("Partidos disponibles para seleccion:")
-                        st.session_state.partidos_disponibles = partidos
-                    else:
-                        st.error(f"Error: {error}")
-                        st.session_state.busqueda_realizada = False
-
-            if st.session_state.partidos_disponibles:
-                partido_elegido = st.selectbox("Selecciona un partido:", st.session_state.partidos_disponibles)
-                if st.button("Usar este partido"):
-                    st.session_state.nombre_buscado = partido_elegido
-                    st.session_state.busqueda_realizada = True
-                    st.session_state.partidos_disponibles = []
-                    st.rerun()
-
-    # Seccion manual para mercados no disponibles en API (corners, tarjetas)
-    st.markdown("---")
-    st.subheader("Registro manual de cuotas")
-    st.markdown("Utiliza este bloque para mercados especiales como **corners**, **tarjetas** o **BTTS** que no esten disponibles en la API.")
-    with st.expander("Abrir formulario manual"):
-        m_partido = st.text_input("Partido")
-        m_mercado = st.text_input("Mercado (ej: Corners Over 9.5)")
-        col_m1, col_m2, col_m3 = st.columns(3)
-        m_c1 = col_m1.number_input("Cuota opcion 1", min_value=1.01, value=1.90, step=0.01)
-        m_c2 = col_m2.number_input("Cuota opcion 2", min_value=1.01, value=1.90, step=0.01)
-        m_c3 = col_m3.number_input("Cuota opcion 3 (opcional)", min_value=1.01, value=1.01, step=0.01)
-        m_fuente = st.selectbox("Casa de apuestas", ["Bet365", "Betano", "RushBet", "Pinnacle", "Betsson", "Otra"])
-        if st.button("Guardar cuotas manuales"):
-            if m_partido and m_mercado:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-                nombre_archivo = f"cuotas/manual_{m_partido.replace(' ', '_')}_{timestamp}.txt"
-                os.makedirs("cuotas", exist_ok=True)
-                with open(nombre_archivo, "w", encoding="utf-8") as f:
-                    f.write(f"# CUOTAS MANUALES - {m_partido}\n")
-                    f.write(f"Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-                    f.write(f"Fuente: {m_fuente}\n\n")
-                    f.write(f"--- {m_fuente.upper()} ---\n")
-                    f.write(f"{m_mercado} - Opcion 1: {m_c1}\n")
-                    f.write(f"{m_mercado} - Opcion 2: {m_c2}\n")
-                    if m_c3 > 1.01:
-                        f.write(f"{m_mercado} - Opcion 3: {m_c3}\n")
-                st.success(f"Cuotas guardadas en {nombre_archivo}")
-            else:
-                st.warning("Completa al menos el nombre del partido y el mercado objetivo.")
+            st.info("No hay datos disponibles. Carga picks para continuar.")
 
 # ====================== PREPARAR PARTIDO ======================
-with tab6:
+with tab_operacion:
     st.subheader("Preparar Partido")
     st.markdown(
         "Automatiza la recoleccion previa del partido con **API-Football**, completa los campos "
         "que siguen siendo manuales y genera una ficha lista para el motor automatico."
     )
-    api_status = "Conectada" if API_FOOTBALL_KEY else "Sin key"
+    fetched_status = fetch_backend_api_status()
+    if fetched_status is not None:
+        api_status = fetched_status
+    else:
+        api_status = "Conectada" if API_FOOTBALL_KEY else "Sin key"
     st.markdown(
         f"""
         <div style="background:radial-gradient(circle at top right, rgba(41,215,100,.12), transparent 34%), linear-gradient(135deg, #0d1523, #121a28 68%, #172437); border:1px solid rgba(255,255,255,.06); border-radius:28px; padding:22px 24px; margin-bottom:16px;">
@@ -2515,7 +2439,7 @@ with tab6:
                 <div>
                     <div style="display:inline-block; background:rgba(41,215,100,.10); color:#5bf089; border:1px solid rgba(59,226,111,.16); border-radius:999px; padding:7px 12px; font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">Centro de preparacion</div>
                     <div style="color:#f7f9fb; font-size:28px; font-weight:900; line-height:1.08;">Arma la ficha del partido antes del analisis</div>
-                    <div style="color:#9fb0c5; font-size:15px; margin-top:8px;">Paso 1: localiza el fixture. Paso 2: valida lo que trajo la API. Paso 3: completa xG, ELO y contexto. Paso 4: genera la ficha final.</div>
+                    <div style="color:#9fb0c5; font-size:15px; margin-top:8px;">Paso 1: localiza el fixture. Paso 2: completa lo manual y revisa faltantes. Paso 3: genera la ficha final.</div>
                 </div>
                 <div style="display:grid; grid-template-columns:repeat(2, minmax(140px, 1fr)); gap:10px; min-width:320px;">
                     <div style="background:rgba(255,255,255,.035); border:1px solid rgba(255,255,255,.06); border-radius:18px; padding:14px 16px;"><div style="color:#8fa1b9; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px;">API</div><div style="color:#f7fbff; font-size:18px; font-weight:900; margin-top:6px;">{api_status}</div></div>
@@ -2541,10 +2465,16 @@ with tab6:
         st.session_state.prepared_match_fixture_loaded = None
     if "prepared_match_manual_data" not in st.session_state:
         st.session_state.prepared_match_manual_data = {}
+    if "prepared_match_last_data" not in st.session_state:
+        st.session_state.prepared_match_last_data = None
+    if "prepared_match_last_manual_data" not in st.session_state:
+        st.session_state.prepared_match_last_manual_data = {}
     if "motor_pick_result" not in st.session_state:
         st.session_state.motor_pick_result = None
     if "motor_context_result" not in st.session_state:
         st.session_state.motor_context_result = None
+    if "motor_last_log_id" not in st.session_state:
+        st.session_state.motor_last_log_id = None
 
     step_actual = st.session_state.get("prepared_match_step", 1)
     st.caption("Pasos del flujo")
@@ -2552,102 +2482,231 @@ with tab6:
     if step_cols[0].button("1. Buscar fixture", use_container_width=True, type="primary" if step_actual == 1 else "secondary", key="prep_step_1"):
         st.session_state.prepared_match_step = 1
         st.rerun()
-    if step_cols[1].button("2. Revisar API", use_container_width=True, type="primary" if step_actual == 2 else "secondary", key="prep_step_2"):
+    if step_cols[1].button("2. Completar manual", use_container_width=True, type="primary" if step_actual == 2 else "secondary", key="prep_step_2"):
         st.session_state.prepared_match_step = 2
         st.rerun()
-    if step_cols[2].button("3. Completar manual", use_container_width=True, type="primary" if step_actual == 3 else "secondary", key="prep_step_3"):
+    if step_cols[2].button("3. Generar ficha", use_container_width=True, type="primary" if step_actual == 3 else "secondary", key="prep_step_3"):
         st.session_state.prepared_match_step = 3
         st.rerun()
-    if step_cols[3].button("4. Generar ficha", use_container_width=True, type="primary" if step_actual == 4 else "secondary", key="prep_step_4"):
+    if step_cols[3].button("4. Motor propio", use_container_width=True, type="primary" if step_actual == 4 else "secondary", key="prep_step_4"):
         st.session_state.prepared_match_step = 4
         st.rerun()
 
-    entrada_partido = st.text_input(
-        "Partido a preparar",
-        value=st.session_state.get("prepared_match_input", ""),
-        placeholder="Ej: Atletico Nacional vs Llaneros - 14/03/2026",
-        key="prep_match_input",
-    )
-    parsed_input = parsear_entrada_partido(entrada_partido)
-    liga_detectada_key, liga_detectada_nombre = detectar_liga_automatica(parsed_input.get("partido", ""))
+    def _reset_prepared_widgets():
+        prep_keys_to_reset = [
+            "prep_data_editor",
+            "prep_over25_local_fallback",
+            "prep_over25_visit_fallback",
+            "prep_btts_local_fallback",
+            "prep_btts_visit_fallback",
+            "prep_g_local_fallback",
+            "prep_e_local_fallback",
+            "prep_p_local_fallback",
+            "prep_g_visit_fallback",
+            "prep_e_visit_fallback",
+            "prep_p_visit_fallback",
+            "prep_pos_local_fallback",
+            "prep_pos_visit_fallback",
+            "prep_arbitro_manual",
+            "prep_forma_local_manual",
+            "prep_forma_visit_manual",
+            "prep_h2h_manual",
+            "prep_lesiones_local_manual",
+            "prep_lesiones_visitante_manual",
+            "prep_alineacion_local_manual",
+            "prep_alineacion_visitante_manual",
+            "prep_cuotas_manual_resumen",
+            "prep_xg_local",
+            "prep_xg_visitante",
+            "prep_elo_local",
+            "prep_elo_visitante",
+            "prep_arbitro_cards_avg",
+            "prep_prompt_perplexity",
+            "prep_perplexity_resultado",
+            "prep_motivacion_local",
+            "prep_motivacion_visitante",
+            "prep_contexto_extra",
+        ]
+        for clave_reset in prep_keys_to_reset:
+            if clave_reset in st.session_state:
+                del st.session_state[clave_reset]
 
-    col_p1, col_p2, col_p3 = st.columns([1.2, 1, 1])
-    col_p1.text_input(
-        "Liga detectada",
-        value=liga_detectada_nombre or "Sin deteccion automatica",
-        disabled=True,
-        key="prep_liga_detectada",
-    )
-    fecha_manual = col_p2.text_input(
-        "Fecha del partido",
-        value=parsed_input.get("fecha", ""),
-        placeholder="DD/MM/AAAA",
-        key="prep_fecha_manual",
-    )
-    fecha_iso_manual = parsed_input.get("fecha_iso", "")
-    if fecha_manual and fecha_manual != parsed_input.get("fecha", ""):
-        try:
-            fecha_iso_manual = datetime.strptime(fecha_manual, "%d/%m/%Y").strftime("%Y-%m-%d")
-        except Exception:
-            fecha_iso_manual = ""
+    fecha_seleccionada = st.session_state.get("prep_fecha_seleccionada", datetime.now().astimezone().date())
+    fecha_iso_seleccion = fecha_seleccionada.isoformat() if hasattr(fecha_seleccionada, "isoformat") else str(fecha_seleccionada)
 
-    if col_p3.button("Consultar API-Football", type="primary", use_container_width=True):
-        if not entrada_partido.strip():
-            st.warning("Escribe primero el partido.")
-        else:
-            st.session_state.prepared_match_input = entrada_partido.strip()
-            with st.spinner("Consultando fixture, forma, H2H, tabla, lesiones, alineaciones y odds..."):
-                datos_prep, error_prep = preparar_partido_desde_api(
-                    entrada_partido.strip(),
-                    fecha_iso=fecha_iso_manual,
-                    liga_key=liga_detectada_key,
-                )
-            if error_prep:
-                st.error(f"No se pudo preparar el partido: {error_prep}")
-                st.session_state.prepared_match_data = None
-            else:
-                nuevo_fixture_id = datos_prep.get("fixture_id")
-                fixture_anterior = st.session_state.get("prepared_match_fixture_loaded")
-                if nuevo_fixture_id and nuevo_fixture_id != fixture_anterior:
-                    prep_keys_to_reset = [
-                        "prep_data_editor",
-                        "prep_over25_local_fallback",
-                        "prep_over25_visit_fallback",
-                        "prep_btts_local_fallback",
-                        "prep_btts_visit_fallback",
-                        "prep_g_local_fallback",
-                        "prep_e_local_fallback",
-                        "prep_p_local_fallback",
-                        "prep_g_visit_fallback",
-                        "prep_e_visit_fallback",
-                        "prep_p_visit_fallback",
-                        "prep_pos_local_fallback",
-                        "prep_pos_visit_fallback",
-                        "prep_arbitro_manual",
-                        "prep_forma_local_manual",
-                        "prep_forma_visit_manual",
-                        "prep_h2h_manual",
-                        "prep_lesiones_local_manual",
-                        "prep_lesiones_visitante_manual",
-                        "prep_alineacion_local_manual",
-                        "prep_alineacion_visitante_manual",
-                        "prep_cuotas_manual_resumen",
-                        "prep_xg_local",
-                        "prep_xg_visitante",
-                        "prep_elo_local",
-                        "prep_elo_visitante",
-                        "prep_motivacion_local",
-                        "prep_motivacion_visitante",
-                        "prep_contexto_extra",
-                    ]
-                    for clave_reset in prep_keys_to_reset:
-                        if clave_reset in st.session_state:
-                            del st.session_state[clave_reset]
-                st.session_state.prepared_match_data = datos_prep
-                st.session_state.prepared_match_fixture_loaded = nuevo_fixture_id
-                st.session_state.prepared_match_step = 2
-                st.success("Partido localizado y datos base cargados.")
+    if step_actual == 1:
+        st.markdown("### Partidos analizables por fecha")
+        col_fecha1, col_fecha2, col_fecha3 = st.columns([1.2, 1, 1])
+        with col_fecha1:
+            fecha_seleccionada = st.date_input(
+                "Fecha local",
+                value=st.session_state.get("prep_fecha_seleccionada", datetime.now().astimezone().date()),
+                min_value=datetime.now().astimezone().date(),
+                max_value=(datetime.now().astimezone() + timedelta(days=7)).date(),
+                key="prep_fecha_seleccionada",
+            )
+            fecha_iso_seleccion = fecha_seleccionada.isoformat()
+        with col_fecha2:
+            if st.button("Cargar partidos del dia", use_container_width=True, type="primary"):
+                fetched = fetch_backend_partidos_por_fecha(fecha_iso_seleccion)
+                if fetched is not None:
+                    st.session_state.partidos_del_dia = fetched
+                    st.session_state.prep_partidos_error = None
+                else:
+                    partidos_fecha, error_fecha = obtener_partidos_por_fecha_local(fecha_iso_seleccion, solo_futuros=True)
+                    st.session_state.partidos_del_dia = partidos_fecha if not error_fecha else []
+                    st.session_state.prep_partidos_error = error_fecha
+                st.session_state.prep_fecha_cargada = fecha_iso_seleccion
                 st.rerun()
+        with col_fecha3:
+            if st.button("Proximos 3 dias", use_container_width=True):
+                partidos_proximos, error_prox = obtener_partidos_proximos_locales(dias_adelante=3)
+                st.session_state.partidos_del_dia = partidos_proximos if not error_prox else []
+                st.session_state.prep_partidos_error = error_prox
+                st.session_state.prep_fecha_cargada = "__proximos__"
+                st.rerun()
+
+        fecha_cargada = st.session_state.get("prep_fecha_cargada")
+        if fecha_cargada != fecha_iso_seleccion:
+            fetched = fetch_backend_partidos_por_fecha(fecha_iso_seleccion)
+            if fetched is not None:
+                st.session_state.partidos_del_dia = fetched
+                st.session_state.prep_partidos_error = None
+            else:
+                partidos_inicio, error_inicio = obtener_partidos_por_fecha_local(fecha_iso_seleccion, solo_futuros=True)
+                st.session_state.partidos_del_dia = partidos_inicio if not error_inicio else []
+                st.session_state.prep_partidos_error = error_inicio
+            st.session_state.prep_fecha_cargada = fecha_iso_seleccion
+
+        if "partidos_del_dia" not in st.session_state:
+            fetched = fetch_backend_partidos_por_fecha(fecha_iso_seleccion)
+            if fetched is not None:
+                st.session_state.partidos_del_dia = fetched
+                st.session_state.prep_partidos_error = None
+            else:
+                partidos_inicio, error_inicio = obtener_partidos_por_fecha_local(fecha_iso_seleccion, solo_futuros=True)
+                st.session_state.partidos_del_dia = partidos_inicio if not error_inicio else []
+                st.session_state.prep_partidos_error = error_inicio
+            st.session_state.prep_fecha_cargada = fecha_iso_seleccion
+
+        partidos_filtrados_fecha = st.session_state.get("partidos_del_dia", [])
+        error_lista = st.session_state.get("prep_partidos_error")
+        if error_lista and not partidos_filtrados_fecha:
+            st.warning(f"No se pudo cargar la lista: {error_lista}")
+
+        if partidos_filtrados_fecha:
+            st.success(f"✓ {len(partidos_filtrados_fecha)} partidos disponibles para analizar")
+            from collections import defaultdict
+            partidos_por_liga = defaultdict(list)
+            for p in partidos_filtrados_fecha:
+                partidos_por_liga[p.get("liga", "Sin liga")].append(p)
+
+            ligas_disponibles = ["Todas"] + sorted(partidos_por_liga.keys())
+            liga_seleccionada = st.selectbox("Filtrar por liga", ligas_disponibles, key="prep_filtro_liga")
+            partidos_filtrados = partidos_por_liga.get(liga_seleccionada, []) if liga_seleccionada != "Todas" else partidos_filtrados_fecha
+
+            st.markdown("---")
+            for i, partido in enumerate(partidos_filtrados):
+                col_part_1, col_part_2 = st.columns([4, 1])
+                with col_part_1:
+                    st.markdown(
+                        f"""
+                        <div style="background: linear-gradient(135deg, rgba(20,28,40,0.9), rgba(15,22,32,0.95)); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 16px; margin-bottom: 10px;">
+                            <div style="color: #7a8aa3; font-size: 12px; margin-bottom: 6px;">
+                                {partido.get('liga', 'Sin liga')} • Por jugar
+                            </div>
+                            <div style="color: #c8d4e0; font-size: 16px; font-weight: 700;">
+                                {partido.get('local', 'Local')} vs {partido.get('visitante', 'Visitante')}
+                            </div>
+                            <div style="color: #6a7a8d; font-size: 13px; margin-top: 4px;">
+                                🕐 {partido.get('hora', '--:--')} (hora local)
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with col_part_2:
+                    if st.button("Seleccionar", key=f"sel_partido_{i}", use_container_width=True):
+                        entrada_partido = f"{partido.get('local', '')} vs {partido.get('visitante', '')}"
+                        with st.spinner("Consultando fixture, forma, H2H, tabla, lesiones, alineaciones y odds..."):
+                            datos_prep, error_prep = preparar_partido_desde_api(
+                                entrada_partido,
+                                fecha_iso=fecha_seleccionada.isoformat(),
+                            )
+                        if error_prep:
+                            st.error(f"No se pudo preparar el partido: {error_prep}")
+                            st.session_state.prepared_match_data = None
+                        else:
+                            nuevo_fixture_id = datos_prep.get("fixture_id")
+                            fixture_anterior = st.session_state.get("prepared_match_fixture_loaded")
+                            if nuevo_fixture_id and nuevo_fixture_id != fixture_anterior:
+                                _reset_prepared_widgets()
+                            st.session_state.prepared_match_input = entrada_partido
+                            st.session_state.prepared_match_data = datos_prep
+                            st.session_state.prepared_match_fixture_loaded = nuevo_fixture_id
+                            st.session_state.prepared_match_step = 2
+                            st.success(f"✓ Partido cargado: {entrada_partido}")
+                        st.rerun()
+            st.markdown(f"Total: **{len(partidos_filtrados)}** partidos")
+        else:
+            st.info("No hay partidos pendientes para esa fecha local.")
+    
+    # Mantener el sistema antiguo por compatibilidad (entrada manual)
+    with st.expander("🔧 Buscar partido manualmente (alternativo)"):
+        st.markdown("Si no encuentra el partido en la lista, puede buscarlo manualmente:")
+        entrada_partido = st.text_input(
+            "Partido a preparar",
+            value=st.session_state.get("prepared_match_input", ""),
+            placeholder="Ej: Atletico Nacional vs Llaneros - 14/03/2026",
+            key="prep_match_input_manual",
+        )
+        parsed_input = parsear_entrada_partido(entrada_partido)
+        liga_detectada_key, liga_detectada_nombre = detectar_liga_automatica(parsed_input.get("partido", ""))
+
+        col_p1, col_p2, col_p3 = st.columns([1.2, 1, 1])
+        col_p1.text_input(
+            "Liga detectada",
+            value=liga_detectada_nombre or "Sin deteccion automatica",
+            disabled=True,
+            key="prep_liga_detectada",
+        )
+        fecha_manual = col_p2.text_input(
+            "Fecha del partido",
+            value=parsed_input.get("fecha", ""),
+            placeholder="DD/MM/AAAA",
+            key="prep_fecha_manual",
+        )
+        fecha_iso_manual = parsed_input.get("fecha_iso", "")
+        if fecha_manual and fecha_manual != parsed_input.get("fecha", ""):
+            try:
+                fecha_iso_manual = datetime.strptime(fecha_manual, "%d/%m/%Y").strftime("%Y-%m-%d")
+            except Exception:
+                fecha_iso_manual = ""
+
+                if not entrada_partido.strip():
+                    st.warning("Escribe primero el nombre del partido (ej: Local vs Visitante).")
+                else:
+                    st.session_state.prepared_match_input = entrada_partido.strip()
+                    with st.spinner("Consultando fixture, forma, H2H, tabla, lesiones, alineaciones y odds..."):
+                        datos_prep, error_prep = preparar_partido_desde_api(
+                            entrada_partido.strip(),
+                            fecha_iso=fecha_iso_manual,
+                            liga_key=liga_detectada_key,
+                        )
+                    if error_prep:
+                        st.error(f"Fallo en la busqueda: {error_prep}")
+                        st.info("Asegurate de que el nombre del equipo sea similar al oficial y la fecha sea correcta.")
+                        st.session_state.prepared_match_data = None
+                    else:
+                        nuevo_fixture_id = datos_prep.get("fixture_id")
+                        fixture_anterior = st.session_state.get("prepared_match_fixture_loaded")
+                        if nuevo_fixture_id and nuevo_fixture_id != fixture_anterior:
+                            _reset_prepared_widgets()
+                        st.session_state.prepared_match_data = datos_prep
+                        st.session_state.prepared_match_fixture_loaded = nuevo_fixture_id
+                        st.session_state.prepared_match_step = 2
+                        st.success(f"✓ Partido localizado: {datos_prep.get('partido', entrada_partido)}")
+                    st.rerun()
 
     datos_preparados = st.session_state.get("prepared_match_data")
     if datos_preparados:
@@ -2671,6 +2730,33 @@ with tab6:
         st.markdown("### Estado de preparacion")
         debug_api = datos_preparados.get("debug_api", {})
 
+        def _lineup_item_has_real_data(item):
+            formacion = str((item or {}).get("formacion", "") or "").strip().lower()
+            titulares = [str(x or "").strip() for x in (item or {}).get("titulares", []) if str(x or "").strip()]
+            return bool((formacion and formacion != "none") or len(titulares) >= 6)
+
+        def _lineups_have_real_data_ui(lineups):
+            return any(_lineup_item_has_real_data(item) for item in (lineups or []))
+
+        def _find_team_lineup_item(lineups, team_name):
+            team_norm = str(team_name or "").strip().lower()
+            for item in lineups or []:
+                if str(item.get("equipo", "")).strip().lower() == team_norm:
+                    return item
+            return {}
+
+        def _alineaciones_api_ok():
+            lineups = datos_preparados.get("lineups", []) or []
+            if lineups:
+                home_item = _find_team_lineup_item(lineups, home_api.get("equipo", ""))
+                away_item = _find_team_lineup_item(lineups, away_api.get("equipo", ""))
+                return _lineup_item_has_real_data(home_item) and _lineup_item_has_real_data(away_item)
+            info = debug_api.get("alineaciones", {}) or {}
+            detalle = str(info.get("detalle", "") or "").strip().lower()
+            if "sin formacion/titulares utiles" in detalle:
+                return False
+            return bool(info.get("ok"))
+
         def _estado_compuesto(*flags):
             flags = [bool(f) for f in flags]
             if flags and all(flags):
@@ -2686,7 +2772,7 @@ with tab6:
             ("H2H", _estado_compuesto(debug_api.get("h2h", {}).get("ok"))),
             ("Arbitro", _estado_compuesto(bool(datos_preparados.get("arbitro")))),
             ("Lesiones", _estado_compuesto(debug_api.get("lesiones_local", {}).get("ok"), debug_api.get("lesiones_visitante", {}).get("ok"))),
-            ("Alineaciones", _estado_compuesto(debug_api.get("alineaciones", {}).get("ok"))),
+            ("Alineaciones", _estado_compuesto(_alineaciones_api_ok())),
             ("Cuotas", _estado_compuesto(debug_api.get("odds", {}).get("ok"))),
         ]
         faltantes_api = [etiqueta for etiqueta, estado in resumen_bloques if estado != "Completo"]
@@ -2706,20 +2792,29 @@ with tab6:
                 st.success("La API si trajo: " + (", ".join(api_ok_labels) if api_ok_labels else "Nada"))
                 if api_missing_labels:
                     st.warning("La API no trajo: " + ", ".join(api_missing_labels))
-                st.dataframe(
-                    pd.DataFrame(resumen_bloques, columns=["Bloque", "Estado"]),
-                    width="stretch",
-                    hide_index=True,
-                )
             with col_e2:
                 st.markdown("**Campos que aun debes completar manualmente**")
-                st.write("- xG local")
-                st.write("- xG visitante")
-                st.write("- ELO local")
-                st.write("- ELO visitante")
-                st.write("- Motivacion / contexto local")
-                st.write("- Motivacion / contexto visitante")
-                st.write("- Contexto adicional del partido")
+                faltantes_accionables = [
+                    "xG local",
+                    "xG visitante",
+                    "ELO local",
+                    "ELO visitante",
+                    "Promedio amarillas arbitro",
+                    "Motivacion / contexto local",
+                    "Motivacion / contexto visitante",
+                    "Contexto adicional del partido",
+                ]
+                if debug_api.get("lesiones_local", {}).get("ok") is False:
+                    faltantes_accionables.append("Lesiones / suspensiones local")
+                if debug_api.get("lesiones_visitante", {}).get("ok") is False:
+                    faltantes_accionables.append("Lesiones / suspensiones visitante")
+                if not _alineaciones_api_ok():
+                    faltantes_accionables.append("Alineacion probable local")
+                    faltantes_accionables.append("Alineacion probable visitante")
+                if not bool(datos_preparados.get("arbitro")):
+                    faltantes_accionables.append("Arbitro")
+                for item in faltantes_accionables:
+                    st.write(f"- {item}")
                 if faltantes_api:
                     st.warning("La API no encontro: " + ", ".join(faltantes_api))
                 else:
@@ -2751,14 +2846,30 @@ with tab6:
         lineups_api = datos_preparados.get("lineups", [])
         lineup_local_api_txt = ""
         lineup_visit_api_txt = ""
+        home_norm = re.sub(r"\s+", " ", str(home_api.get("equipo", "")).strip().lower())
+        away_norm = re.sub(r"\s+", " ", str(away_api.get("equipo", "")).strip().lower())
         for item in lineups_api:
-            equipo_norm = str(item.get("equipo", "")).strip().lower()
+            equipo_raw = str(item.get("equipo", "")).strip().lower()
+            equipo_norm = re.sub(r"\s+", " ", equipo_raw)
             titulares = ", ".join([x for x in item.get("titulares", []) if x])
-            bloque = f"Formacion: {item.get('formacion', '')}\nTitulares: {titulares}"
-            if equipo_norm == str(home_api.get("equipo", "")).strip().lower():
+            formacion = str(item.get("formacion", "") or "").strip()
+            if not formacion or formacion.lower() == "none":
+                formacion = "Sin formacion confirmada"
+            bloque = f"Formacion: {formacion}\nTitulares: {titulares or 'Sin titulares confirmados'}"
+            if equipo_norm == home_norm:
                 lineup_local_api_txt = bloque
-            elif equipo_norm == str(away_api.get("equipo", "")).strip().lower():
+            elif equipo_norm == away_norm:
                 lineup_visit_api_txt = bloque
+        if not lineup_local_api_txt and len(lineups_api) >= 1:
+            item = lineups_api[0]
+            titulares = ", ".join([x for x in item.get("titulares", []) if x])
+            formacion = str(item.get("formacion", "") or "").strip() or "Sin formacion confirmada"
+            lineup_local_api_txt = f"Formacion: {formacion}\nTitulares: {titulares or 'Sin titulares confirmados'}"
+        if not lineup_visit_api_txt and len(lineups_api) >= 2:
+            item = lineups_api[1]
+            titulares = ", ".join([x for x in item.get("titulares", []) if x])
+            formacion = str(item.get("formacion", "") or "").strip() or "Sin formacion confirmada"
+            lineup_visit_api_txt = f"Formacion: {formacion}\nTitulares: {titulares or 'Sin titulares confirmados'}"
         odds_api_txt = ""
         resumen_odds_api = datos_preparados.get("odds", {}).get("resumen", {})
         odds_lines = []
@@ -2770,9 +2881,6 @@ with tab6:
             odds_lines.append(f"{mercado} ({primero.get('bookmaker', '')}): {valores}")
         odds_api_txt = "\n".join(odds_lines)
 
-        st.markdown("---")
-        st.subheader("1. Lo que realmente trajo la API")
-        st.caption("Esta zona es solo lectura. Aqui ves exactamente lo que llego antes de tocar nada manualmente.")
         if debug_api:
             plan_limit_msgs = []
             debug_rows = []
@@ -2791,12 +2899,17 @@ with tab6:
             }
             for clave, info in debug_api.items():
                 detalle = str(info.get("detalle", "") or "")
+                estado_ok = bool(info.get("ok"))
+                if clave == "alineaciones":
+                    estado_ok = _alineaciones_api_ok()
+                    if not estado_ok:
+                        detalle = "Sin formacion/titulares utiles por ambos equipos"
                 if "Free plans do not have access" in detalle:
                     plan_limit_msgs.append(f"{etiquetas_debug.get(clave, clave)}: {detalle}")
                 debug_rows.append(
                     {
                         "Bloque": etiquetas_debug.get(clave, clave),
-                        "Estado": "OK" if info.get("ok") else "Sin datos",
+                        "Estado": "OK" if estado_ok else "Sin datos",
                         "Detalle": detalle,
                     }
                 )
@@ -2805,8 +2918,9 @@ with tab6:
                     "Tu plan free de API-Football esta limitando varios bloques para esta temporada/consulta.\n\n"
                     + "\n".join(f"- {msg}" for msg in plan_limit_msgs)
                 )
-            st.markdown("**Diagnostico de respuesta API**")
-            st.dataframe(pd.DataFrame(debug_rows), width="stretch", hide_index=True)
+            with st.expander("Ver diagnostico tecnico API", expanded=False):
+                st.dataframe(pd.DataFrame(resumen_bloques, columns=["Bloque", "Estado"]), width="stretch", hide_index=True)
+                st.dataframe(pd.DataFrame(debug_rows), width="stretch", hide_index=True)
         df_api_original = pd.DataFrame(
             [
                 {
@@ -2847,69 +2961,72 @@ with tab6:
                 },
             ]
         )
-        st.dataframe(df_api_original, width="stretch", hide_index=True)
+        with st.expander("Ver detalle crudo de la API", expanded=False):
+            st.dataframe(df_api_original, width="stretch", hide_index=True)
 
-        api_tab1, api_tab2, api_tab3, api_tab4, api_tab5 = st.tabs(
-            ["Forma API", "H2H API", "Lesiones API", "Alineaciones API", "Odds API"]
-        )
-        with api_tab1:
-            col_f1, col_f2 = st.columns(2)
-            col_f1.markdown(f"**{home_api.get('equipo', 'Local')}**")
-            df_home_forma = pd.DataFrame(home_api.get("forma", []))
-            if not df_home_forma.empty:
-                col_f1.dataframe(df_home_forma, width="stretch", hide_index=True)
-            else:
-                col_f1.info("La API no trajo forma reciente para este equipo.")
-            col_f2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
-            df_away_forma = pd.DataFrame(away_api.get("forma", []))
-            if not df_away_forma.empty:
-                col_f2.dataframe(df_away_forma, width="stretch", hide_index=True)
-            else:
-                col_f2.info("La API no trajo forma reciente para este equipo.")
-        with api_tab2:
-            df_h2h = pd.DataFrame(datos_preparados.get("h2h", []))
-            if not df_h2h.empty:
-                st.dataframe(df_h2h, width="stretch", hide_index=True)
-            else:
-                st.info("La API no trajo H2H para este partido.")
-        with api_tab3:
-            col_i1, col_i2 = st.columns(2)
-            col_i1.markdown(f"**{home_api.get('equipo', 'Local')}**")
-            df_i1 = pd.DataFrame(home_api.get("lesiones", []))
-            if not df_i1.empty:
-                col_i1.dataframe(df_i1, width="stretch", hide_index=True)
-            else:
-                col_i1.info("La API no trajo lesiones para este equipo.")
-            col_i2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
-            df_i2 = pd.DataFrame(away_api.get("lesiones", []))
-            if not df_i2.empty:
-                col_i2.dataframe(df_i2, width="stretch", hide_index=True)
-            else:
-                col_i2.info("La API no trajo lesiones para este equipo.")
-        with api_tab4:
-            if lineups_api:
-                st.dataframe(pd.DataFrame(lineups_api), width="stretch", hide_index=True)
-            else:
-                st.info("La API no trajo alineaciones para este partido.")
-        with api_tab5:
-            resumen_odds = datos_preparados.get("odds", {}).get("resumen", {})
-            filas_odds = []
-            for mercado, items in resumen_odds.items():
-                if not items:
-                    filas_odds.append({"Mercado": mercado, "Bookmaker": "-", "Valores": "Sin datos"})
-                    continue
-                primero = items[0]
-                valores = ", ".join(f"{v.get('value', '')} @ {v.get('odd', '')}" for v in primero.get("valores", [])[:6])
-                filas_odds.append({"Mercado": mercado, "Bookmaker": primero.get("bookmaker", ""), "Valores": valores})
-            if filas_odds:
-                st.dataframe(pd.DataFrame(filas_odds), width="stretch", hide_index=True)
-            else:
-                st.info("La API no trajo odds para este partido.")
+            api_tab1, api_tab2, api_tab3, api_tab4, api_tab5 = st.tabs(
+                ["Forma API", "H2H API", "Lesiones API", "Alineaciones API", "Odds API"]
+            )
+            with api_tab1:
+                col_f1, col_f2 = st.columns(2)
+                col_f1.markdown(f"**{home_api.get('equipo', 'Local')}**")
+                df_home_forma = pd.DataFrame(home_api.get("forma", []))
+                if not df_home_forma.empty:
+                    col_f1.dataframe(df_home_forma, width="stretch", hide_index=True)
+                else:
+                    col_f1.info("La API no trajo forma reciente para este equipo.")
+                col_f2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
+                df_away_forma = pd.DataFrame(away_api.get("forma", []))
+                if not df_away_forma.empty:
+                    col_f2.dataframe(df_away_forma, width="stretch", hide_index=True)
+                else:
+                    col_f2.info("La API no trajo forma reciente para este equipo.")
+            with api_tab2:
+                df_h2h = pd.DataFrame(datos_preparados.get("h2h", []))
+                if not df_h2h.empty:
+                    st.dataframe(df_h2h, width="stretch", hide_index=True)
+                else:
+                    st.info("La API no trajo H2H para este partido.")
+            with api_tab3:
+                col_i1, col_i2 = st.columns(2)
+                col_i1.markdown(f"**{home_api.get('equipo', 'Local')}**")
+                df_i1 = pd.DataFrame(home_api.get("lesiones", []))
+                if not df_i1.empty:
+                    col_i1.dataframe(df_i1, width="stretch", hide_index=True)
+                else:
+                    col_i1.info("La API no trajo lesiones para este equipo.")
+                col_i2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
+                df_i2 = pd.DataFrame(away_api.get("lesiones", []))
+                if not df_i2.empty:
+                    col_i2.dataframe(df_i2, width="stretch", hide_index=True)
+                else:
+                    col_i2.info("La API no trajo lesiones para este equipo.")
+            with api_tab4:
+                if lineups_api:
+                    st.dataframe(pd.DataFrame(lineups_api), width="stretch", hide_index=True)
+                else:
+                    st.info("La API no trajo alineaciones para este partido.")
+            with api_tab5:
+                resumen_odds = datos_preparados.get("odds", {}).get("resumen", {})
+                filas_odds = []
+                for mercado, items in resumen_odds.items():
+                    if not items:
+                        filas_odds.append({"Mercado": mercado, "Bookmaker": "-", "Valores": "Sin datos"})
+                        continue
+                    primero = items[0]
+                    valores = ", ".join(f"{v.get('value', '')} @ {v.get('odd', '')}" for v in primero.get("valores", [])[:6])
+                    filas_odds.append({"Mercado": mercado, "Bookmaker": primero.get("bookmaker", ""), "Valores": valores})
+                if filas_odds:
+                    st.dataframe(pd.DataFrame(filas_odds), width="stretch", hide_index=True)
+                else:
+                    st.info("La API no trajo odds para este partido.")
 
         st.markdown("---")
         st.subheader("2. Editar o completar datos")
-        st.caption("Aqui corriges lo que vino mal, llenas lo vacio y dejas lista la ficha final. Si un campo vino desde API, aparecera precargado.")
-        st.markdown("**Metricas editables por equipo**")
+        st.caption("Por defecto solo deberias completar lo manual o lo que la API no trajo. Las sobreescrituras avanzadas quedan ocultas abajo.")
+        mostrar_avanzado = st.toggle("Mostrar correcciones avanzadas de API", value=False, key="prep_toggle_avanzado")
+        if mostrar_avanzado:
+            st.markdown("**Metricas editables por equipo**")
         df_api_editor = pd.DataFrame(
                 [
                     {
@@ -2950,99 +3067,86 @@ with tab6:
                     },
                 ]
             )
-        df_api_editor = st.data_editor(
-            df_api_editor,
-            width="stretch",
-            hide_index=True,
-            key="prep_data_editor",
-            disabled=["Equipo"],
-            use_container_width=True,
-        )
+        over25_local_fallback = ""
+        over25_visit_fallback = ""
+        btts_local_fallback = ""
+        btts_visit_fallback = ""
+        g_local_fallback = ""
+        e_local_fallback = ""
+        p_local_fallback = ""
+        g_visit_fallback = ""
+        e_visit_fallback = ""
+        p_visit_fallback = ""
+        posesion_local_fallback = ""
+        posesion_visit_fallback = ""
+        arbitro_manual = str(datos_preparados.get("arbitro", "") or "")
+        forma_local_manual = home_forma_txt
+        forma_visitante_manual = away_forma_txt
+        h2h_manual = h2h_txt
+        lesiones_local_manual = lesiones_local_api_txt
+        lesiones_visitante_manual = lesiones_visit_api_txt
+        alineacion_local_manual = lineup_local_api_txt
+        alineacion_visitante_manual = lineup_visit_api_txt
+        cuotas_manual_resumen = odds_api_txt
+        faltan_lesiones = not (debug_api.get("lesiones_local", {}).get("ok") and debug_api.get("lesiones_visitante", {}).get("ok"))
+        faltan_alineaciones = not _alineaciones_api_ok()
+        faltan_arbitro = not bool((arbitro_manual or "").strip())
 
-        st.markdown("**Bloques editables o completables**")
-        col_fx1, col_fx2 = st.columns(2)
-        over25_local_fallback = col_fx1.text_input("Over 2.5 local (%)", key="prep_over25_local_fallback", placeholder="Ej: 62.5")
-        over25_visit_fallback = col_fx2.text_input("Over 2.5 visitante (%)", key="prep_over25_visit_fallback", placeholder="Ej: 48.0")
-        col_fx3, col_fx4 = st.columns(2)
-        btts_local_fallback = col_fx3.text_input("BTTS local (%)", key="prep_btts_local_fallback", placeholder="Ej: 54.0")
-        btts_visit_fallback = col_fx4.text_input("BTTS visitante (%)", key="prep_btts_visit_fallback", placeholder="Ej: 44.0")
-        st.caption("G / E / P")
-        col_gep1, col_gep2, col_gep3 = st.columns(3)
-        g_local_fallback = col_gep1.text_input("G local", key="prep_g_local_fallback", placeholder="Ej: 7")
-        e_local_fallback = col_gep2.text_input("E local", key="prep_e_local_fallback", placeholder="Ej: 2")
-        p_local_fallback = col_gep3.text_input("P local", key="prep_p_local_fallback", placeholder="Ej: 1")
-        col_gep4, col_gep5, col_gep6 = st.columns(3)
-        g_visit_fallback = col_gep4.text_input("G visitante", key="prep_g_visit_fallback", placeholder="Ej: 4")
-        e_visit_fallback = col_gep5.text_input("E visitante", key="prep_e_visit_fallback", placeholder="Ej: 3")
-        p_visit_fallback = col_gep6.text_input("P visitante", key="prep_p_visit_fallback", placeholder="Ej: 3")
-        col_pos1, col_pos2 = st.columns(2)
-        posesion_local_fallback = col_pos1.text_input("Posesion local (%)", key="prep_pos_local_fallback", placeholder="Ej: 54.3")
-        posesion_visit_fallback = col_pos2.text_input("Posesion visitante (%)", key="prep_pos_visit_fallback", placeholder="Ej: 48.9")
-        arbitro_manual = st.text_input(
-            "Arbitro",
-            key="prep_arbitro_manual",
-            value=str(datos_preparados.get("arbitro", "") or ""),
-            placeholder="Ej: Andres Rojas",
-        )
-        col_form1, col_form2 = st.columns(2)
-        forma_local_manual = col_form1.text_area(
-            f"Forma reciente {home_api.get('equipo', 'Local')}",
-            key="prep_forma_local_manual",
-            value=home_forma_txt,
-            height=130,
-            placeholder="Fecha | Rival | Marcador",
-        )
-        forma_visitante_manual = col_form2.text_area(
-            f"Forma reciente {away_api.get('equipo', 'Visitante')}",
-            key="prep_forma_visit_manual",
-            value=away_forma_txt,
-            height=130,
-            placeholder="Fecha | Rival | Marcador",
-        )
-        h2h_manual = st.text_area(
-            "H2H ultimos enfrentamientos",
-            key="prep_h2h_manual",
-            value=h2h_txt,
-            height=120,
-            placeholder="Fecha | Partido | Marcador",
-        )
-        col_les1, col_les2 = st.columns(2)
-        lesiones_local_manual = col_les1.text_area(
-            "Lesiones / suspensiones local",
-            key="prep_lesiones_local_manual",
-            value=lesiones_local_api_txt,
-            height=90,
-            placeholder="Jugadores ausentes o suspensiones",
-        )
-        lesiones_visitante_manual = col_les2.text_area(
-            "Lesiones / suspensiones visitante",
-            key="prep_lesiones_visitante_manual",
-            value=lesiones_visit_api_txt,
-            height=90,
-            placeholder="Jugadores ausentes o suspensiones",
-        )
-        col_al1, col_al2 = st.columns(2)
-        alineacion_local_manual = col_al1.text_area(
-            "Alineacion probable local",
-            key="prep_alineacion_local_manual",
-            value=lineup_local_api_txt,
-            height=90,
-            placeholder="Formacion y titulares probables",
-        )
-        alineacion_visitante_manual = col_al2.text_area(
-            "Alineacion probable visitante",
-            key="prep_alineacion_visitante_manual",
-            value=lineup_visit_api_txt,
-            height=90,
-            placeholder="Formacion y titulares probables",
-        )
-        cuotas_manual_resumen = st.text_area(
-            "Cuotas / resumen de mercado",
-            key="prep_cuotas_manual_resumen",
-            value=odds_api_txt,
-            height=120,
-            placeholder="Ej: 1X2 Bet365: Local 1.80, Empate 3.40, Visitante 4.90\nOver 2.5: 1.95 | Under 2.5: 1.80\nBTTS: Si 1.87 | No 1.90",
-        )
+        if mostrar_avanzado:
+            df_api_editor = st.data_editor(
+                df_api_editor,
+                width="stretch",
+                hide_index=True,
+                key="prep_data_editor",
+                disabled=["Equipo"],
+                use_container_width=True,
+            )
+
+            st.markdown("**Sobreescrituras avanzadas**")
+            col_fx1, col_fx2 = st.columns(2)
+            over25_local_fallback = col_fx1.text_input("Over 2.5 local (%)", key="prep_over25_local_fallback", placeholder="Ej: 62.5")
+            over25_visit_fallback = col_fx2.text_input("Over 2.5 visitante (%)", key="prep_over25_visit_fallback", placeholder="Ej: 48.0")
+            col_fx3, col_fx4 = st.columns(2)
+            btts_local_fallback = col_fx3.text_input("BTTS local (%)", key="prep_btts_local_fallback", placeholder="Ej: 54.0")
+            btts_visit_fallback = col_fx4.text_input("BTTS visitante (%)", key="prep_btts_visit_fallback", placeholder="Ej: 44.0")
+            st.caption("G / E / P")
+            col_gep1, col_gep2, col_gep3 = st.columns(3)
+            g_local_fallback = col_gep1.text_input("G local", key="prep_g_local_fallback", placeholder="Ej: 7")
+            e_local_fallback = col_gep2.text_input("E local", key="prep_e_local_fallback", placeholder="Ej: 2")
+            p_local_fallback = col_gep3.text_input("P local", key="prep_p_local_fallback", placeholder="Ej: 1")
+            col_gep4, col_gep5, col_gep6 = st.columns(3)
+            g_visit_fallback = col_gep4.text_input("G visitante", key="prep_g_visit_fallback", placeholder="Ej: 4")
+            e_visit_fallback = col_gep5.text_input("E visitante", key="prep_e_visit_fallback", placeholder="Ej: 3")
+            p_visit_fallback = col_gep6.text_input("P visitante", key="prep_p_visit_fallback", placeholder="Ej: 3")
+            col_pos1, col_pos2 = st.columns(2)
+            posesion_local_fallback = col_pos1.text_input("Posesion local (%)", key="prep_pos_local_fallback", placeholder="Ej: 54.3")
+            posesion_visit_fallback = col_pos2.text_input("Posesion visitante (%)", key="prep_pos_visit_fallback", placeholder="Ej: 48.9")
+            arbitro_manual = st.text_input("Arbitro", key="prep_arbitro_manual", value=arbitro_manual, placeholder="Ej: Andres Rojas")
+            col_form1, col_form2 = st.columns(2)
+            forma_local_manual = col_form1.text_area(f"Forma reciente {home_api.get('equipo', 'Local')}", key="prep_forma_local_manual", value=forma_local_manual, height=130, placeholder="Fecha | Rival | Marcador")
+            forma_visitante_manual = col_form2.text_area(f"Forma reciente {away_api.get('equipo', 'Visitante')}", key="prep_forma_visit_manual", value=forma_visitante_manual, height=130, placeholder="Fecha | Rival | Marcador")
+            h2h_manual = st.text_area("H2H ultimos enfrentamientos", key="prep_h2h_manual", value=h2h_manual, height=120, placeholder="Fecha | Partido | Marcador")
+            col_les1, col_les2 = st.columns(2)
+            lesiones_local_manual = col_les1.text_area("Lesiones / suspensiones local", key="prep_lesiones_local_manual", value=lesiones_local_manual, height=90, placeholder="Jugadores ausentes o suspensiones")
+            lesiones_visitante_manual = col_les2.text_area("Lesiones / suspensiones visitante", key="prep_lesiones_visitante_manual", value=lesiones_visitante_manual, height=90, placeholder="Jugadores ausentes o suspensiones")
+            col_al1, col_al2 = st.columns(2)
+            alineacion_local_manual = col_al1.text_area("Alineacion probable local", key="prep_alineacion_local_manual", value=alineacion_local_manual, height=90, placeholder="Formacion y titulares probables")
+            alineacion_visitante_manual = col_al2.text_area("Alineacion probable visitante", key="prep_alineacion_visitante_manual", value=alineacion_visitante_manual, height=90, placeholder="Formacion y titulares probables")
+            cuotas_manual_resumen = st.text_area("Cuotas / resumen de mercado", key="prep_cuotas_manual_resumen", value=cuotas_manual_resumen, height=120, placeholder="Ej: 1X2 Bet365: Local 1.80, Empate 3.40, Visitante 4.90")
+        else:
+            st.markdown("**Solo faltantes detectados**")
+            if faltan_arbitro:
+                arbitro_manual = st.text_input("Arbitro", key="prep_arbitro_manual", value=arbitro_manual, placeholder="Ej: Andres Rojas")
+            if faltan_lesiones:
+                col_les1, col_les2 = st.columns(2)
+                lesiones_local_manual = col_les1.text_area("Lesiones / suspensiones local", key="prep_lesiones_local_manual", value=lesiones_local_manual, height=90, placeholder="Jugadores ausentes o suspensiones")
+                lesiones_visitante_manual = col_les2.text_area("Lesiones / suspensiones visitante", key="prep_lesiones_visitante_manual", value=lesiones_visitante_manual, height=90, placeholder="Jugadores ausentes o suspensiones")
+            if faltan_alineaciones:
+                col_al1, col_al2 = st.columns(2)
+                alineacion_local_manual = col_al1.text_area("Alineacion probable local", key="prep_alineacion_local_manual", value=alineacion_local_manual, height=90, placeholder="Formacion y titulares probables")
+                alineacion_visitante_manual = col_al2.text_area("Alineacion probable visitante", key="prep_alineacion_visitante_manual", value=alineacion_visitante_manual, height=90, placeholder="Formacion y titulares probables")
+            if not any([faltan_arbitro, faltan_lesiones, faltan_alineaciones]):
+                st.caption("No hay faltantes principales de API en esta seccion. Solo completa xG, ELO, arbitro/tarjetas y contexto.")
 
         if isinstance(df_api_editor, pd.DataFrame) and len(df_api_editor) >= 2:
             home_row = df_api_editor.iloc[0].to_dict()
@@ -3096,93 +3200,94 @@ with tab6:
         away_api_resuelto["tabla"]["p"] = _resolver_valor(away_api_resuelto.get("tabla", {}).get("p"), p_visit_fallback)
 
         if step_actual >= 2:
-            st.caption("Asi quedaria la ficha despues de tus correcciones manuales")
-            df_api = pd.DataFrame(
-                [
-                    {
-                        "Equipo": home_api_resuelto.get("equipo", ""),
-                        "GF": home_api_resuelto.get("goles_favor", 0),
-                        "GC": home_api_resuelto.get("goles_contra", 0),
-                        "% Over 2.5": home_api_resuelto.get("over25_pct", 0),
-                        "% BTTS": home_api_resuelto.get("btts_pct", 0),
-                        "Tiros puerta": home_api_resuelto.get("shots_on_goal", 0),
-                        "Tiros totales": home_api_resuelto.get("shots_total", 0),
-                        "Corners": home_api_resuelto.get("corners", 0),
-                        "Posesion": home_api_resuelto.get("possession", 0),
-                        "Amarillas": home_api_resuelto.get("yellow", 0),
-                        "Rojas": home_api_resuelto.get("red", 0),
-                        "Pos": home_api_resuelto.get("tabla", {}).get("pos", ""),
-                        "Pts": home_api_resuelto.get("tabla", {}).get("puntos", ""),
-                        "G/E/P": f"{home_api_resuelto.get('tabla', {}).get('g', '')}/{home_api_resuelto.get('tabla', {}).get('e', '')}/{home_api_resuelto.get('tabla', {}).get('p', '')}",
-                    },
-                    {
-                        "Equipo": away_api_resuelto.get("equipo", ""),
-                        "GF": away_api_resuelto.get("goles_favor", 0),
-                        "GC": away_api_resuelto.get("goles_contra", 0),
-                        "% Over 2.5": away_api_resuelto.get("over25_pct", 0),
-                        "% BTTS": away_api_resuelto.get("btts_pct", 0),
-                        "Tiros puerta": away_api_resuelto.get("shots_on_goal", 0),
-                        "Tiros totales": away_api_resuelto.get("shots_total", 0),
-                        "Corners": away_api_resuelto.get("corners", 0),
-                        "Posesion": away_api_resuelto.get("possession", 0),
-                        "Amarillas": away_api_resuelto.get("yellow", 0),
-                        "Rojas": away_api_resuelto.get("red", 0),
-                        "Pos": away_api_resuelto.get("tabla", {}).get("pos", ""),
-                        "Pts": away_api_resuelto.get("tabla", {}).get("puntos", ""),
-                        "G/E/P": f"{away_api_resuelto.get('tabla', {}).get('g', '')}/{away_api_resuelto.get('tabla', {}).get('e', '')}/{away_api_resuelto.get('tabla', {}).get('p', '')}",
-                    },
-                ]
-            )
-            st.dataframe(df_api, width="stretch")
+            with st.expander("Ver ficha tecnica consolidada", expanded=False):
+                st.caption("Asi quedaria la ficha despues de tus correcciones manuales")
+                df_api = pd.DataFrame(
+                    [
+                        {
+                            "Equipo": home_api_resuelto.get("equipo", ""),
+                            "GF": home_api_resuelto.get("goles_favor", 0),
+                            "GC": home_api_resuelto.get("goles_contra", 0),
+                            "% Over 2.5": home_api_resuelto.get("over25_pct", 0),
+                            "% BTTS": home_api_resuelto.get("btts_pct", 0),
+                            "Tiros puerta": home_api_resuelto.get("shots_on_goal", 0),
+                            "Tiros totales": home_api_resuelto.get("shots_total", 0),
+                            "Corners": home_api_resuelto.get("corners", 0),
+                            "Posesion": home_api_resuelto.get("possession", 0),
+                            "Amarillas": home_api_resuelto.get("yellow", 0),
+                            "Rojas": home_api_resuelto.get("red", 0),
+                            "Pos": home_api_resuelto.get("tabla", {}).get("pos", ""),
+                            "Pts": home_api_resuelto.get("tabla", {}).get("puntos", ""),
+                            "G/E/P": f"{home_api_resuelto.get('tabla', {}).get('g', '')}/{home_api_resuelto.get('tabla', {}).get('e', '')}/{home_api_resuelto.get('tabla', {}).get('p', '')}",
+                        },
+                        {
+                            "Equipo": away_api_resuelto.get("equipo", ""),
+                            "GF": away_api_resuelto.get("goles_favor", 0),
+                            "GC": away_api_resuelto.get("goles_contra", 0),
+                            "% Over 2.5": away_api_resuelto.get("over25_pct", 0),
+                            "% BTTS": away_api_resuelto.get("btts_pct", 0),
+                            "Tiros puerta": away_api_resuelto.get("shots_on_goal", 0),
+                            "Tiros totales": away_api_resuelto.get("shots_total", 0),
+                            "Corners": away_api_resuelto.get("corners", 0),
+                            "Posesion": away_api_resuelto.get("possession", 0),
+                            "Amarillas": away_api_resuelto.get("yellow", 0),
+                            "Rojas": away_api_resuelto.get("red", 0),
+                            "Pos": away_api_resuelto.get("tabla", {}).get("pos", ""),
+                            "Pts": away_api_resuelto.get("tabla", {}).get("puntos", ""),
+                            "G/E/P": f"{away_api_resuelto.get('tabla', {}).get('g', '')}/{away_api_resuelto.get('tabla', {}).get('e', '')}/{away_api_resuelto.get('tabla', {}).get('p', '')}",
+                        },
+                    ]
+                )
+                st.dataframe(df_api, width="stretch")
 
-            verif_tab1, verif_tab2, verif_tab3, verif_tab4 = st.tabs(["Forma final", "H2H final", "Lesiones final", "Odds final"])
-            with verif_tab1:
-                col_f1, col_f2 = st.columns(2)
-                col_f1.markdown(f"**{home_api.get('equipo', 'Local')}**")
-                df_home_forma = pd.DataFrame(home_api.get("forma", []))
-                if not df_home_forma.empty:
-                    col_f1.dataframe(df_home_forma, width="stretch")
-                else:
-                    col_f1.info("Sin forma reciente disponible")
-                col_f2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
-                df_away_forma = pd.DataFrame(away_api.get("forma", []))
-                if not df_away_forma.empty:
-                    col_f2.dataframe(df_away_forma, width="stretch")
-                else:
-                    col_f2.info("Sin forma reciente disponible")
-            with verif_tab2:
-                df_h2h = pd.DataFrame(datos_preparados.get("h2h", []))
-                if not df_h2h.empty:
-                    st.dataframe(df_h2h, width="stretch")
-                else:
-                    st.info("Sin H2H disponible")
-            with verif_tab3:
-                col_i1, col_i2 = st.columns(2)
-                col_i1.markdown(f"**{home_api.get('equipo', 'Local')}**")
-                df_i1 = pd.DataFrame(home_api.get("lesiones", []))
-                if not df_i1.empty:
-                    col_i1.dataframe(df_i1, width="stretch")
-                else:
-                    col_i1.info("Sin bajas registradas")
-                col_i2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
-                df_i2 = pd.DataFrame(away_api.get("lesiones", []))
-                if not df_i2.empty:
-                    col_i2.dataframe(df_i2, width="stretch")
-                else:
-                    col_i2.info("Sin bajas registradas")
-            with verif_tab4:
-                resumen_odds = datos_preparados.get("odds", {}).get("resumen", {})
-                filas_odds = []
-                for mercado, items in resumen_odds.items():
-                    if not items:
-                        filas_odds.append({"Mercado": mercado, "Bookmaker": "-", "Valores": "Sin datos"})
-                        continue
+                verif_tab1, verif_tab2, verif_tab3, verif_tab4 = st.tabs(["Forma final", "H2H final", "Lesiones final", "Odds final"])
+                with verif_tab1:
+                    col_f1, col_f2 = st.columns(2)
+                    col_f1.markdown(f"**{home_api.get('equipo', 'Local')}**")
+                    df_home_forma = pd.DataFrame(home_api.get("forma", []))
+                    if not df_home_forma.empty:
+                        col_f1.dataframe(df_home_forma, width="stretch")
+                    else:
+                        col_f1.info("Sin forma reciente disponible")
+                    col_f2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
+                    df_away_forma = pd.DataFrame(away_api.get("forma", []))
+                    if not df_away_forma.empty:
+                        col_f2.dataframe(df_away_forma, width="stretch")
+                    else:
+                        col_f2.info("Sin forma reciente disponible")
+                with verif_tab2:
+                    df_h2h = pd.DataFrame(datos_preparados.get("h2h", []))
+                    if not df_h2h.empty:
+                        st.dataframe(df_h2h, width="stretch")
+                    else:
+                        st.info("Sin H2H disponible")
+                with verif_tab3:
+                    col_i1, col_i2 = st.columns(2)
+                    col_i1.markdown(f"**{home_api.get('equipo', 'Local')}**")
+                    df_i1 = pd.DataFrame(home_api.get("lesiones", []))
+                    if not df_i1.empty:
+                        col_i1.dataframe(df_i1, width="stretch")
+                    else:
+                        col_i1.info("Sin bajas registradas")
+                    col_i2.markdown(f"**{away_api.get('equipo', 'Visitante')}**")
+                    df_i2 = pd.DataFrame(away_api.get("lesiones", []))
+                    if not df_i2.empty:
+                        col_i2.dataframe(df_i2, width="stretch")
+                    else:
+                        col_i2.info("Sin bajas registradas")
+                with verif_tab4:
+                    resumen_odds = datos_preparados.get("odds", {}).get("resumen", {})
+                    filas_odds = []
+                    for mercado, items in resumen_odds.items():
+                        if not items:
+                            filas_odds.append({"Mercado": mercado, "Bookmaker": "-", "Valores": "Sin datos"})
+                            continue
                     primero = items[0]
                     valores = ", ".join(f"{v.get('value', '')} @ {v.get('odd', '')}" for v in primero.get("valores", [])[:6])
                     filas_odds.append({"Mercado": mercado, "Bookmaker": primero.get("bookmaker", ""), "Valores": valores})
                 st.dataframe(pd.DataFrame(filas_odds), width="stretch")
 
-        if step_actual >= 3:
+        if step_actual >= 2:
             st.markdown("---")
             st.subheader("Campos manuales que completan los 8 sistemas")
         col_m1, col_m2 = st.columns(2)
@@ -3191,6 +3296,48 @@ with tab6:
         col_m3, col_m4 = st.columns(2)
         elo_local = col_m3.text_input("ELO local", key="prep_elo_local", placeholder="Ej: 1642")
         elo_visitante = col_m4.text_input("ELO visitante", key="prep_elo_visitante", placeholder="Ej: 1510")
+        promedio_tarjetas_arbitro = st.text_input(
+            "Promedio amarillas arbitro (manual)",
+            key="prep_arbitro_cards_avg",
+            placeholder="Ej: 5.4",
+            help="Usalo si quieres ponderar mejor mercados de tarjetas o tension del partido.",
+        )
+        st.markdown("### Contexto externo para Perplexity")
+        prompt_perplexity = (
+            f"Analiza el partido {datos_preparados.get('partido', '')} del {datos_preparados.get('fecha', '')} en "
+            f"{datos_preparados.get('liga_nombre', '')}. No quiero pick ni prediccion, solo contexto reciente y verificable.\n\n"
+            "Devuelveme en espanol y de forma concreta:\n"
+            "1. Situacion competitiva real de ambos equipos.\n"
+            "2. Si es eliminatoria, fase, ida o vuelta y marcador global o de ida si aplica.\n"
+            "3. Que necesita cada equipo en este partido.\n"
+            "4. Lesiones, suspensiones, rotaciones o dudas recientes importantes.\n"
+            "5. Noticias de ultima hora que cambien el contexto.\n"
+            "6. Perfil relevante del arbitro si influye en tension o tarjetas.\n"
+            "7. Un resumen final del contexto del local y otro del visitante.\n\n"
+            "No inventes nada. Si algo no lo encuentras, dilo explicitamente."
+        )
+        st.text_area(
+            "Prompt personalizado para Perplexity",
+            value=prompt_perplexity,
+            key="prep_prompt_perplexity",
+            height=210,
+            help="Copialo y pegalo directo en Perplexity para pedir el contexto del partido que elegiste.",
+        )
+        respuesta_perplexity = st.text_area(
+            "Resultado pegado desde Perplexity",
+            key="prep_perplexity_resultado",
+            height=180,
+            placeholder="Pega aqui la respuesta de Perplexity para enriquecer el contexto del partido.",
+        )
+        col_px1, col_px2 = st.columns([1.1, 1])
+        if col_px1.button("Usar respuesta de Perplexity como contexto base", use_container_width=True):
+            if str(st.session_state.get("prep_perplexity_resultado", "")).strip():
+                st.session_state.prep_contexto_extra = st.session_state.get("prep_perplexity_resultado", "").strip()
+                st.success("La respuesta de Perplexity se copio al contexto adicional.")
+                st.rerun()
+            else:
+                st.warning("Primero pega la respuesta de Perplexity.")
+        col_px2.caption("Luego Ollama puede procesar este bloque para sugerir mejor motivacion y contexto.")
         st.caption("Si no quieres redactar el contexto a mano, puedes pedirle a Ollama local que te lo sugiera con lo que ya trae la ficha.")
         ctx_auto_1, ctx_auto_2 = st.columns([1.2, 1])
         if ctx_auto_1.button("Autocompletar contexto con Ollama", use_container_width=True):
@@ -3200,6 +3347,7 @@ with tab6:
                     f"Fecha: {datos_preparados.get('fecha', '')}",
                     f"Liga: {datos_preparados.get('liga_nombre', '')}",
                     f"Arbitro: {arbitro_manual or datos_preparados.get('arbitro', '')}",
+                    f"Promedio tarjetas arbitro: {promedio_tarjetas_arbitro}",
                     f"Forma local: {forma_local_manual or str(home_api_resuelto.get('forma', []))}",
                     f"Forma visitante: {forma_visitante_manual or str(away_api_resuelto.get('forma', []))}",
                     f"H2H: {h2h_manual or str(datos_preparados.get('h2h', []))}",
@@ -3207,6 +3355,7 @@ with tab6:
                     f"Lesiones visitante: {lesiones_visitante_manual or str(away_api_resuelto.get('lesiones', []))}",
                     f"Alineacion local: {alineacion_local_manual or str((datos_preparados.get('lineups') or {}).get('home', ''))}",
                     f"Alineacion visitante: {alineacion_visitante_manual or str((datos_preparados.get('lineups') or {}).get('away', ''))}",
+                    f"Contexto externo Perplexity: {st.session_state.get('prep_perplexity_resultado', '')}",
                 ]
             ).strip()
             sugerencia_ctx, error_ctx = sugerir_campos_contexto_ollama(contexto_fuente)
@@ -3232,6 +3381,8 @@ with tab6:
             "xg_visitante": xg_visitante,
             "elo_local": elo_local,
             "elo_visitante": elo_visitante,
+            "promedio_tarjetas_arbitro": promedio_tarjetas_arbitro,
+            "contexto_perplexity": st.session_state.get("prep_perplexity_resultado", ""),
             "motivacion_local": motivacion_local,
             "motivacion_visitante": motivacion_visitante,
             "contexto_extra": contexto_extra,
@@ -3264,6 +3415,7 @@ with tab6:
                 f"Fecha: {datos_preparados.get('fecha', '')}",
                 f"Liga: {datos_preparados.get('liga_nombre', '')}",
                 f"Arbitro: {arbitro_manual or datos_preparados.get('arbitro', '')}",
+                f"Promedio tarjetas arbitro: {promedio_tarjetas_arbitro}",
                 f"Forma local: {forma_local_manual or str(home_api_resuelto.get('forma', []))}",
                 f"Forma visitante: {forma_visitante_manual or str(away_api_resuelto.get('forma', []))}",
                 f"H2H: {h2h_manual or str(datos_preparados.get('h2h', []))}",
@@ -3271,13 +3423,14 @@ with tab6:
                 f"Lesiones visitante: {lesiones_visitante_manual or str(away_api_resuelto.get('lesiones', []))}",
                 f"Alineacion local: {alineacion_local_manual or str((datos_preparados.get('lineups') or {}).get('home', ''))}",
                 f"Alineacion visitante: {alineacion_visitante_manual or str((datos_preparados.get('lineups') or {}).get('away', ''))}",
+                f"Contexto externo Perplexity: {st.session_state.get('prep_perplexity_resultado', '')}",
             ]
         ).strip()
 
         completos_manual = sum(
             1 for clave, valor in manual_data.items() if not clave.endswith("_fallback") and str(valor or "").strip()
         )
-        if step_actual == 3 and completos_manual >= 4:
+        if step_actual == 2 and completos_manual >= 4:
             st.success("Ya tienes buena base manual. Puedes pasar a generar la ficha.")
         col_c_manual_1, col_c_manual_2 = st.columns(2)
         col_c_manual_1.metric("Campos manuales completados", f"{completos_manual}/7")
@@ -3296,7 +3449,7 @@ with tab6:
             for etiqueta, valor in checklist:
                 st.write(f"{'OK' if str(valor or '').strip() else '-'} {etiqueta}")
 
-        if step_actual >= 4:
+        if step_actual >= 3:
             st.markdown("---")
             st.subheader("Mapa de cobertura del analisis")
         api_odds = datos_preparados.get("odds", {}).get("resumen", {})
@@ -3436,7 +3589,7 @@ with tab6:
             {
                 "Campo": "Alineaciones probables",
                 "Fuente": "API",
-                "Estado": "Completo" if (datos_preparados.get("lineups") or alineacion_local_manual.strip() or alineacion_visitante_manual.strip()) else "Pendiente",
+                "Estado": "Completo" if (_alineaciones_api_ok() or alineacion_local_manual.strip() or alineacion_visitante_manual.strip()) else "Pendiente",
                 "Sistema": "Motivacion / contexto",
             },
             {
@@ -3492,9 +3645,9 @@ with tab6:
         completos_totales = int((df_cobertura["Estado"] == "Completo").sum())
         pendientes_totales = int((df_cobertura["Estado"] == "Pendiente").sum())
         cobertura_pct = (completos_totales / max(1, len(df_cobertura))) * 100
-        if step_actual < 4 and cobertura_pct >= 70:
-            st.info("La cobertura ya esta alta. Puedes entrar al paso 4 para generar la ficha final.")
-        if step_actual >= 4:
+        if step_actual < 3 and cobertura_pct >= 70:
+            st.info("La cobertura ya esta alta. Puedes entrar al paso 3 para generar la ficha final.")
+        if step_actual >= 3:
             st.dataframe(df_cobertura, width="stretch")
             col_cov1, col_cov2, col_cov3 = st.columns(3)
             col_cov1.metric("Campos cubiertos", completos_totales)
@@ -3507,7 +3660,13 @@ with tab6:
 
             col_g1, col_g2 = st.columns([1.2, 1])
             if col_g1.button("Generar ficha estructurada", use_container_width=True):
-                if not str(motivacion_local or "").strip() and not str(motivacion_visitante or "").strip() and not str(contexto_extra or "").strip():
+                # Validacion preventiva de campos manuales
+                if not xg_local.strip() or not xg_visitante.strip():
+                    st.warning("Faltan datos de xG (Expected Goals). Son vitales para el motor Poisson.")
+                elif not elo_local.strip() or not elo_visitante.strip():
+                    st.warning("Faltan datos de ELO Rating. Son necesarios para el sistema 1.")
+                elif not str(motivacion_local or "").strip() and not str(motivacion_visitante or "").strip() and not str(contexto_extra or "").strip():
+                    st.info("Intentando autocompletar contexto con Ollama antes de generar...")
                     sugerencia_auto, error_auto = sugerir_campos_contexto_ollama(contexto_fuente_prep)
                     if sugerencia_auto and not error_auto:
                         motivacion_local = sugerencia_auto.get("motivacion_local", "")
@@ -3516,32 +3675,45 @@ with tab6:
                         st.session_state.prep_motivacion_local = motivacion_local
                         st.session_state.prep_motivacion_visitante = motivacion_visitante
                         st.session_state.prep_contexto_extra = contexto_extra
-                datos_ficha = dict(datos_preparados)
-                datos_ficha["home"] = home_api_resuelto
-                datos_ficha["away"] = away_api_resuelto
-                manual_data["motivacion_local"] = motivacion_local
-                manual_data["motivacion_visitante"] = motivacion_visitante
-                manual_data["contexto_extra"] = contexto_extra
-                ficha_generada = construir_ficha_preparada(datos_ficha, manual_data)
-                st.session_state.prepared_match_manual_data = dict(manual_data)
-                st.session_state.prepared_match_text = ficha_generada
-                st.session_state.prompt_auto = ficha_generada
-                save_prepared_match(
-                    datos_preparados.get("partido", ""),
-                    datos_preparados.get("fecha", ""),
-                    datos_preparados.get("liga_nombre", ""),
-                    round(cobertura_pct, 2),
-                    ficha_generada,
-                )
-                if str(motivacion_local or "").strip() or str(motivacion_visitante or "").strip() or str(contexto_extra or "").strip():
-                    st.success("Ficha estructurada generada y cargada para Analisis Automatico.")
-                else:
-                    st.success("Ficha estructurada generada y cargada para Analisis Automatico.")
+                        st.success("Contexto autocompletado.")
+                    else:
+                        st.error("No se pudo autocompletar el contexto. Por favor, redacta brevemente la motivacion de los equipos.")
+                        st.stop()
+                
+                with st.spinner("Construyendo ficha final operativa..."):
+                    datos_ficha = dict(datos_preparados)
+                    datos_ficha["home"] = home_api_resuelto
+                    datos_ficha["away"] = away_api_resuelto
+                    manual_data["motivacion_local"] = motivacion_local
+                    manual_data["motivacion_visitante"] = motivacion_visitante
+                    manual_data["contexto_extra"] = contexto_extra
+                    manual_data["contexto_libre"] = "\n".join(
+                        [x for x in [motivacion_local, motivacion_visitante, contexto_extra] if str(x or "").strip()]
+                    ).strip()
+                    ficha_generada = construir_ficha_preparada(datos_ficha, manual_data)
+                    st.session_state.prepared_match_manual_data = dict(manual_data)
+                    st.session_state.prepared_match_last_manual_data = dict(manual_data)
+                    st.session_state.prepared_match_last_data = dict(datos_preparados)
+                    st.session_state.prepared_match_text = ficha_generada
+                    st.session_state.prompt_auto = ficha_generada
+                    save_prepared_match(
+                        datos_preparados.get("partido", ""),
+                        datos_preparados.get("fecha", ""),
+                        datos_preparados.get("liga_nombre", ""),
+                        round(cobertura_pct, 2),
+                        ficha_generada,
+                    )
+                st.success("✓ Ficha generada y guardada. Listo para el analisis del Motor Propio.")
+                st.session_state.prepared_match_step = 4
+                st.rerun()
 
             if col_g2.button("Limpiar partido preparado", use_container_width=True):
+                _reset_prepared_widgets()
                 st.session_state.prepared_match_data = None
                 st.session_state.prepared_match_fixture_loaded = None
                 st.session_state.prepared_match_manual_data = {}
+                st.session_state.prepared_match_last_data = None
+                st.session_state.prepared_match_last_manual_data = {}
                 st.session_state.prepared_match_text = ""
                 st.session_state.prepared_match_step = 1
                 st.session_state.motor_pick_result = None
@@ -3583,496 +3755,440 @@ with tab6:
                             st.session_state.prompt_auto = st.session_state.prepared_match_text
                             st.success("Ficha historica cargada en Analisis Automatico.")
 
-# ====================== ANALISIS AUTOMATICO ======================
-with tab7:
-    _render_section_banner(
-        "Analisis automatico",
-        "Lanza el motor multi-IA, audita calidad, revisa consenso y decide si el escenario merece guardarse o publicarse.",
-        "Motor IA",
-    )
-    st.subheader("Motor de analisis automatico Multi-IA")
-    st.markdown(
-        "Envia el analisis base del Investigador a **7 analistas automaticos** en paralelo. "
-        "Cada motor opera con un perfil distinto y el modulo de consenso consolida los resultados."
-    )
+        # ====================== PASO 4: MOTOR PROPIO (integrado) ======================
+        if step_actual >= 4:
+            st.markdown("---")
+            _render_section_banner(
+                "Motor propio",
+                "Ejecuta el motor matematico propio para que el pick salga del sistema y no de IAs externas.",
+                "Motor Core",
+            )
+            st.subheader("Motor de picks autonomo")
+            st.markdown(
+                "Esta capa usa **Poisson, Dixon-Coles, ELO, forma ponderada y mercado eficiente**. "
+                "La idea es que el cerebro principal del pick viva aqui y las IAs queden solo para redactar."
+            )
 
-    # Estado de APIs
-    try:
-        from ai_providers import ejecutar_analisis_automatico, verificar_apis_configuradas, PERSONALIDADES
-        apis_ok = verificar_apis_configuradas()
-        cols_api = st.columns(len(apis_ok))
-        for i, (nombre, estado) in enumerate(apis_ok.items()):
-            icono = "OK" if estado else "NO"
-            cols_api[i].metric(nombre, icono)
-        api_disponibles = sum(1 for v in apis_ok.values() if v)
-        api_no_disponibles = len(apis_ok) - api_disponibles
-        s1, s2, s3 = st.columns(3)
-        s1.metric("Proveedores listos", api_disponibles)
-        s2.metric("Proveedores con fallo", api_no_disponibles)
-        s3.metric("Analistas esperados", len(PERSONALIDADES))
-    except ImportError:
-        st.error("No se encontro ai_providers.py. Asegurate de haberlo anadido al proyecto.")
-        st.stop()
+            datos_motor = st.session_state.get("prepared_match_data") or st.session_state.get("prepared_match_last_data")
+            if not datos_motor:
+                st.info("Genera la ficha en el Paso 3 para poder correr el motor propio.")
+            else:
+                manual_preparado = _collect_prepared_manual_bridge()
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Partido", datos_motor.get("partido", "-"))
+                m2.metric("Fecha", datos_motor.get("fecha", "-"))
+                m3.metric("Liga", datos_motor.get("liga_nombre", "-"))
+                m4.metric("Fixture", datos_motor.get("fixture_id", "-"))
 
-    st.markdown("---")
+                st.caption("El motor toma los datos del Paso 2. Aqui puedes revisar, ajustar o reforzar antes de ejecutarlo.")
+                resumen_cols = st.columns(4)
+                resumen_cols[0].metric("xG listos", sum(1 for v in [manual_preparado.get("xg_local"), manual_preparado.get("xg_visitante")] if str(v or "").strip()), "/2")
+                resumen_cols[1].metric("ELO listos", sum(1 for v in [manual_preparado.get("elo_local"), manual_preparado.get("elo_visitante")] if str(v or "").strip()), "/2")
+                resumen_cols[2].metric("Contexto listo", "Si" if any(str(manual_preparado.get(k) or "").strip() for k in ["motivacion_local", "motivacion_visitante", "contexto_extra"]) else "No")
+                resumen_cols[3].metric("Odds API", "Si" if datos_motor.get("odds", {}).get("resumen") else "No")
 
-    # Personalidades disponibles
-    with st.expander("Ver perfiles de los analistas automaticos"):
-        for nombre, datos in PERSONALIDADES.items():
-            st.markdown(f"**{nombre}**: {datos['descripcion']}")
-
-    st.markdown("---")
-
-    # Input del analisis
-    st.markdown("### Pega aqui el analisis del Investigador (Perplexity)")
-    prompt_investigador = st.text_area(
-        "Analisis completo del Investigador",
-        height=300,
-        placeholder="Pega aqui el output del Investigador v3.0 con todos los datos del partido...",
-        key="prompt_auto"
-    )
-
-    if "auto_resultados_cache" not in st.session_state:
-        st.session_state.auto_resultados_cache = None
-    if "auto_error_cache" not in st.session_state:
-        st.session_state.auto_error_cache = None
-    if "auto_import_feedback" not in st.session_state:
-        st.session_state.auto_import_feedback = None
-
-    if st.button("Ejecutar analisis automatico", type="primary"):
-        if not prompt_investigador.strip():
-            st.warning("Carga primero el analisis base del Investigador.")
-        else:
-            try:
-                prompt_base = cargar_prompt_automatico()
-                prompt_final = prompt_base.replace(
-                    "[resumen compacto del investigador]",
-                    prompt_investigador.strip(),
+                st.markdown("### Entradas manuales que usa el motor")
+                c1, c2 = st.columns(2)
+                xg_local_motor = c1.text_input(
+                    "xG local",
+                    value=str(manual_preparado.get("xg_local", "") or ""),
+                    key="motor_xg_local",
+                    placeholder="Ej: 1.62",
                 )
-            except FileNotFoundError:
-                st.error("No se encontro el prompt automatico del analista en 01_PROMPTS/automatizacion.")
-                st.stop()
-
-            import time
-            import queue as queue_module
-            import threading
-
-            t_inicio = time.time()
-            cola = queue_module.Queue()
-            resultado_container = [None]
-
-            def correr():
-                def on_resultado(r):
-                    cola.put(r)
-                resultado_container[0] = ejecutar_analisis_automatico(prompt_final, callback=on_resultado)
-                cola.put("__FIN__")
-
-            hilo = threading.Thread(target=correr)
-            hilo.start()
-
-            # Panel de estado en tiempo real
-            st.markdown("#### Estado de ejecucion en tiempo real")
-            estados = {}
-            panel = st.empty()
-
-            def render_panel():
-                filas = ["| IA | Estado | Tiempo | Decision |", "|---|---|---|---|"]
-                for nombre, info in estados.items():
-                    t = info.get("tiempo", "?")
-                    if info["estado"] == "esperando":
-                        filas.append(f"| {nombre} | En espera | {t}s | ... |")
-                    elif info["estado"] == "ok":
-                        decision = info.get("decision", "?")
-                        estado_label = "Procesado" if decision == "PICK" else "Sin entrada"
-                        filas.append(f"| {nombre} | {estado_label} | {t}s | **{decision}** |")
+                xg_visit_motor = c2.text_input(
+                    "xG visitante",
+                    value=str(manual_preparado.get("xg_visitante", "") or ""),
+                    key="motor_xg_visitante",
+                    placeholder="Ej: 0.94",
+                )
+                c3, c4 = st.columns(2)
+                elo_local_motor = c3.text_input(
+                    "ELO local",
+                    value=str(manual_preparado.get("elo_local", "") or ""),
+                    key="motor_elo_local",
+                    placeholder="Ej: 1642",
+                )
+                elo_visit_motor = c4.text_input(
+                    "ELO visitante",
+                    value=str(manual_preparado.get("elo_visitante", "") or ""),
+                    key="motor_elo_visitante",
+                    placeholder="Ej: 1510",
+                )
+                contexto_motor = st.text_area(
+                    "Contexto libre",
+                    value=str(manual_preparado.get("contexto_libre", "") or ""),
+                    key="motor_contexto_libre",
+                    height=100,
+                    placeholder="Lesiones, motivacion, noticias o rotaciones. Si tienes Ollama local, puedes estructurarlo aqui mismo.",
+                )
+                col_ctx1, col_ctx2 = st.columns([1.2, 1])
+                if col_ctx1.button("Analizar contexto con Ollama", use_container_width=True):
+                    contexto_json, error_ctx = analizar_contexto_ollama(contexto_motor)
+                    if error_ctx:
+                        st.warning(error_ctx)
+                        st.session_state.motor_context_result = None
                     else:
-                        filas.append(f"| {nombre} | Error | {t}s | - |")
-                panel.markdown("\n".join(filas) if len(filas) > 2 else "Iniciando...")
+                        st.session_state.motor_context_result = contexto_json
+                        st.success("Contexto analizado con Ollama local.")
+                if col_ctx2.button("Limpiar contexto estructurado", use_container_width=True):
+                    st.session_state.motor_context_result = None
+                    st.rerun()
 
-            # Inicializar todos como esperando
-            from ai_providers import PERSONALIDADES
-            for nombre in PERSONALIDADES:
-                estados[nombre] = {"estado": "esperando", "tiempo": 0}
-            render_panel()
+                contexto_estructurado = st.session_state.get("motor_context_result")
+                if contexto_estructurado:
+                    st.markdown("### Contexto estructurado")
+                    st.json(contexto_estructurado)
 
-            while True:
-                # Actualizar tiempos
-                ahora = int(time.time() - t_inicio)
-                for nombre in estados:
-                    if estados[nombre]["estado"] == "esperando":
-                        estados[nombre]["tiempo"] = ahora
+                manual_motor = {
+                    "xg_local": xg_local_motor,
+                    "xg_visitante": xg_visit_motor,
+                    "elo_local": elo_local_motor,
+                    "elo_visitante": elo_visit_motor,
+                    "promedio_tarjetas_arbitro": str(manual_preparado.get("promedio_tarjetas_arbitro", "") or ""),
+                    "contexto_perplexity": str(manual_preparado.get("contexto_perplexity", "") or ""),
+                    "contexto_libre": contexto_motor,
+                    "contexto_ollama": contexto_estructurado,
+                }
 
-                try:
-                    item = cola.get(timeout=1)
-                    if item == "__FIN__":
-                        break
-                    ia = item.get("ia", "desconocida")
-                    t_ia = int(time.time() - t_inicio)
-                    if item.get("status") == "ok":
-                        decision = item.get("data", {}).get("decision", "?")
-                        estados[ia] = {"estado": "ok", "tiempo": t_ia, "decision": decision}
-                    else:
-                        estados[ia] = {"estado": "error", "tiempo": t_ia}
-                except:
-                    pass
-
-                render_panel()
-
-            hilo.join()
-            panel.empty()
-            resultados, error = resultado_container[0]
-
-            st.session_state.auto_resultados_cache = resultados
-            st.session_state.auto_error_cache = error
-            st.session_state.auto_import_feedback = None
-
-    resultados = st.session_state.auto_resultados_cache
-    error = st.session_state.auto_error_cache
-
-    if st.session_state.auto_import_feedback:
-        feedback = st.session_state.auto_import_feedback
-        if feedback.get("tipo") == "ok":
-            st.success(feedback.get("mensaje", "Importacion completada."))
-        else:
-            st.error(feedback.get("mensaje", "Error en la importacion."))
-
-    if resultados is not None:
-        if error:
-            st.error(f"Error: {error}")
-        else:
-            st.success(f"{len(resultados)} analistas respondieron correctamente")
-
-            picks_validos = []
-            errores_ia = []
-            picks_invalidos = []
-
-            for r in resultados:
-                if r.get("status") == "ok":
-                    if r.get("valid", True):
-                        picks_validos.append(r["data"])
-                    else:
-                        picks_invalidos.append(r)
-                else:
-                    errores_ia.append(r)
-
-            if errores_ia:
-                with st.expander(f"{len(errores_ia)} IAs con incidencias"):
-                    for e in errores_ia:
-                        st.error(f"**{e.get('ia', 'desconocida')}**: {e.get('error', 'error desconocido')}")
-                        raw_error = e.get("raw_output", "")
-                        if raw_error:
-                            st.text_area(
-                                f"Salida cruda con error - {e.get('ia', 'desconocida')}",
-                                value=raw_error,
-                                height=180,
-                                key=f"raw_error_{e.get('ia', 'desconocida')}",
-                                )
-
-            if picks_invalidos:
-                with st.expander(f"{len(picks_invalidos)} IAs descartadas por validacion"):
-                    for item in picks_invalidos:
-                        st.warning(f"**{item.get('ia', 'desconocida')}** no entro al consenso.")
-                        errores_val = item.get("validation_errors", [])
-                        if errores_val:
-                            for err in errores_val:
-                                st.write(f"- {err}")
-                        raw_invalid = item.get("raw_output", "")
-                        if raw_invalid:
-                            st.text_area(
-                                f"Salida cruda descartada - {item.get('ia', 'desconocida')}",
-                                value=raw_invalid,
-                                height=180,
-                                key=f"raw_invalid_{item.get('ia', 'desconocida')}",
-                            )
-
-            if picks_validos:
-                picks_auditados = []
-                for p in picks_validos:
-                    auditoria = _auditar_pick_automatico(p)
-                    p["_mercado_norm"] = auditoria["mercado_norm"]
-                    p["_seleccion_norm"] = auditoria["seleccion_norm"]
-                    p["_alertas_calidad"] = auditoria["alertas"]
-                    p["_calidad"] = auditoria["calidad"]
-                    picks_auditados.append(p)
-
-                picks_emitidos = [p for p in picks_auditados if p.get("decision") == "PICK"]
-                no_bets = [p for p in picks_auditados if p.get("decision") == "NO BET"]
-                picks_solidos = len([p for p in picks_auditados if p.get("_calidad") == "Solido"])
-                picks_revisar = len([p for p in picks_auditados if p.get("_calidad") == "Revisar"])
-                picks_debiles = len([p for p in picks_auditados if p.get("_calidad") == "Debil"])
-                quorum_minimo = 4
-                quorum_ok = len(picks_validos) >= quorum_minimo
-
-                st.markdown("---")
-                st.subheader("Resumen ejecutivo del motor")
-                res1, res2, res3, res4, res5 = st.columns(5)
-                res1.metric("Validos", len(picks_validos))
-                res2.metric("Picks", len(picks_emitidos))
-                res3.metric("NO BET", len(no_bets))
-                res4.metric("Solidos", picks_solidos)
-                res5.metric("Quorum", "OK" if quorum_ok else "Bajo")
-
-                st.markdown("---")
-                st.subheader("Resultados por analista")
-
-                # Tabla resumen
-                filas_resumen = []
-                for p in picks_auditados:
-                    filas_resumen.append({
-                        "IA": p.get("ia", "?"),
-                        "Decision": p.get("decision", "?"),
-                        "Mercado": p.get("_mercado_norm", p.get("mercado", "?")),
-                        "Seleccion": p.get("_seleccion_norm", p.get("seleccion", "?")),
-                        "Cuota": p.get("cuota", 0),
-                        "Confianza": f"{p.get('confianza', 0):.0%}",
-                        "EV": f"{p.get('ev', 0):.2f}",
-                        "Stake": p.get("stake", "?"),
-                        "Sistemas OK": f"{p.get('sistemas_favor', 0)}/8",
-                        "Calidad": p.get("_calidad", "Revisar"),
-                    })
-                df_resumen = pd.DataFrame(filas_resumen)
-                # Convertir todo a string para evitar errores de Arrow
-                df_resumen = df_resumen.astype(str)
-                st.dataframe(df_resumen, width='stretch')
-
-                with st.expander("Lectura corta por analista"):
-                    for p in picks_auditados:
-                        st.markdown(f"**{p.get('ia', '?')}**")
-                        col_l1, col_l2, col_l3, col_l4 = st.columns(4)
-                        col_l1.metric("Mercado", p.get('_mercado_norm', p.get('mercado', '-')))
-                        col_l2.metric("Seleccion", p.get('_seleccion_norm', p.get('seleccion', '-')))
-                        col_l3.metric("Cuota", f"{float(p.get('cuota', 0) or 0):.2f}")
-                        col_l4.metric("Confianza", f"{float(p.get('confianza', 0) or 0):.0%}")
-                        fundamentos = p.get("fundamentos_clave", [])
-                        if fundamentos:
-                            st.caption("Fundamentos clave:")
-                            for f in fundamentos:
-                                st.write(f"- {f}")
-                        st.warning(f"Riesgo principal: {p.get('riesgo_principal', 'Sin riesgo principal declarado.')}")
-                        st.info(f"Lectura del analista: {p.get('razonamiento', 'Sin razonamiento disponible.')}")
-                        st.divider()
-
-                col_v1, col_v2 = st.columns(2)
-                col_v1.metric("Picks emitidos", len(picks_emitidos))
-                col_v2.metric("Escenarios sin entrada", len(no_bets))
-
-                col_v3, col_v4 = st.columns(2)
-                col_v3.metric("Analistas validos", len(picks_validos))
-                col_v4.metric("Quorum minimo", quorum_minimo)
-
-                if quorum_ok:
-                    st.success(f"Quorum alcanzado: {len(picks_validos)} analistas validos.")
-                else:
-                    st.error(
-                        f"Quorum insuficiente: solo {len(picks_validos)} analistas validos. "
-                        "No deberias tratar este consenso como pick serio."
+                if st.button("Ejecutar motor propio", type="primary", use_container_width=True):
+                    st.session_state.prepared_match_manual_data = {
+                        **manual_preparado,
+                        "xg_local": xg_local_motor,
+                        "xg_visitante": xg_visit_motor,
+                        "elo_local": elo_local_motor,
+                        "elo_visitante": elo_visit_motor,
+                        "promedio_tarjetas_arbitro": str(manual_preparado.get("promedio_tarjetas_arbitro", "") or ""),
+                        "motivacion_local": str(manual_preparado.get("motivacion_local", "") or ""),
+                        "motivacion_visitante": str(manual_preparado.get("motivacion_visitante", "") or ""),
+                        "contexto_extra": str(manual_preparado.get("contexto_extra", "") or ""),
+                        "contexto_libre": contexto_motor,
+                        "contexto_perplexity": str(manual_preparado.get("contexto_perplexity", "") or ""),
+                    }
+                    st.session_state.motor_pick_result = analizar_partido_motor(datos_motor, manual_motor)
+                    st.session_state.motor_last_log_id = save_motor_pick_log(
+                        st.session_state.motor_pick_result,
+                        datos_motor=datos_motor,
+                        manual_data=manual_motor,
+                        saved_to_picks=False,
+                        saved_batch=None,
                     )
 
-                filas_auditoria = []
-                for p in picks_auditados:
-                    filas_auditoria.append({
-                        "IA": p.get("ia", "?"),
-                        "Decision": p.get("decision", "?"),
-                        "Mercado normalizado": p.get("_mercado_norm", ""),
-                        "Seleccion normalizada": p.get("_seleccion_norm", ""),
-                        "Calidad": p.get("_calidad", "Revisar"),
-                        "Alertas": " | ".join(p.get("_alertas_calidad", [])) if p.get("_alertas_calidad") else "Sin alertas",
-                    })
-                df_auditoria = pd.DataFrame(filas_auditoria).astype(str)
-
-                st.markdown("---")
-                st.subheader("Lectura operativa")
-                col_q1, col_q2, col_q3 = st.columns(3)
-                col_q1.metric("Salidas solidas", picks_solidos)
-                col_q2.metric("Para revisar", picks_revisar)
-                col_q3.metric("Debiles", picks_debiles)
-
-                confianzas = [float(p.get("confianza", 0) or 0) for p in picks_emitidos]
-                if confianzas:
-                    dispersion = max(confianzas) - min(confianzas)
-                    if dispersion <= 0.05 and len(confianzas) >= 3:
-                        st.warning("Las confianzas de varias IAs son demasiado parecidas. Eso puede indicar rigidez del prompt mas que criterio independiente.")
-
-                if picks_emitidos and quorum_ok:
+                resultado_motor = st.session_state.get("motor_pick_result")
+                if resultado_motor:
+                    pick_motor = resultado_motor.get("pick", {})
+                    consenso_motor = resultado_motor.get("consenso", {})
+                    prob_motor = resultado_motor.get("probabilidad_final", {})
+                    decision_motor = resultado_motor.get("decision_motor", {})
+                    calidad_input = resultado_motor.get("calidad_input", {})
+                    favorito_estructural = resultado_motor.get("favorito_estructural", {})
+                    motor_log_id = st.session_state.get("motor_last_log_id")
                     st.markdown("---")
-                    st.subheader("Consolidacion automatica")
+                    st.subheader("Resumen del motor")
+                    if motor_log_id:
+                        st.caption(f"Log de motor guardado: #{motor_log_id}")
+                    rm1, rm2, rm3, rm4, rm5 = st.columns(5)
+                    rm1.metric("Sistemas a favor", f"{consenso_motor.get('sistemas_a_favor', 0)}/{consenso_motor.get('sistemas_total', 0)}")
+                    rm2.metric("No disponibles", consenso_motor.get("sistemas_no_disponibles", 0))
+                    rm3.metric("Prob. final", f"{prob_motor.get('final', 0)*100:.1f}%")
+                    rm4.metric("Confianza", f"{pick_motor.get('confianza', 0)*100:.1f}%")
+                    rm5.metric("Calidad input", f"{int(calidad_input.get('score', 0) or 0)}/100")
 
-                    # Consolidar: mercado con mas consenso
-                    from collections import Counter
-                    claves_consenso = [
-                        (p.get("_mercado_norm", p.get("mercado", "")), p.get("_seleccion_norm", p.get("seleccion", "")))
-                        for p in picks_emitidos
-                    ]
-                    conteo = Counter(claves_consenso)
-                    (mercado_consenso, sel_consenso), votos_consenso = conteo.most_common(1)[0]
-                    total_votos = len(picks_emitidos)
-                    porcentaje_consenso = votos_consenso / total_votos * 100
+                    pm1, pm2, pm3, pm4, pm5 = st.columns(5)
+                    pm1.metric("Mercado", pick_motor.get("mercado", "-") or "-")
+                    pm2.metric("Seleccion", pick_motor.get("seleccion", "-") or "-")
+                    pm3.metric("Cuota", f"{pick_motor.get('cuota', 0):.2f}")
+                    pm4.metric("EV", f"{pick_motor.get('valor_esperado', 0)*100:.1f}%")
+                    pm5.metric("Stake", pick_motor.get("stake_recomendado", "NO BET"))
 
-                    # Calcular EV promedio para la seleccion de consenso
-                    evs = [
-                        p.get("ev", 0)
-                        for p in picks_emitidos
-                        if p.get("_seleccion_norm", p.get("seleccion", "")) == sel_consenso
-                        and p.get("_mercado_norm", p.get("mercado", "")) == mercado_consenso
-                    ]
-                    ev_promedio = sum(evs) / len(evs) if evs else 0
-
-                    # Calcular cuota promedio
-                    cuotas = [
-                        p.get("cuota", 0)
-                        for p in picks_emitidos
-                        if p.get("_seleccion_norm", p.get("seleccion", "")) == sel_consenso
-                        and p.get("_mercado_norm", p.get("mercado", "")) == mercado_consenso
-                        and p.get("cuota", 0) > 1
-                    ]
-                    cuota_prom = sum(cuotas) / len(cuotas) if cuotas else 0
-
-                    # Determinar stake por consenso
-                    if votos_consenso == 7:
-                        stake_auto = "2u"
-                    elif votos_consenso == 6:
-                        stake_auto = "1.5u"
-                    elif votos_consenso >= 5:
-                        stake_auto = "1u"
+                    if pick_motor.get("emitido"):
+                        st.success(pick_motor.get("razonamiento", "Pick emitido por el motor propio."))
                     else:
-                        stake_auto = "0.5u"
+                        st.warning(pick_motor.get("razonamiento", "El motor no emitio pick."))
 
-                    col_c1, col_c2, col_c3, col_c4 = st.columns(4)
-                    col_c1.metric("Seleccion de consenso", sel_consenso)
-                    col_c2.metric("Votos", f"{votos_consenso}/{total_votos} ({porcentaje_consenso:.0f}%)")
-                    col_c3.metric("EV promedio", f"{ev_promedio:.2f}")
-                    col_c4.metric("Stake sugerido", stake_auto)
-                    st.caption(f"Mercado consolidado: {mercado_consenso}")
+                    decision_cols = st.columns([1.15, 1, 1])
+                    with decision_cols[0]:
+                        st.markdown("### Decision")
+                        st.write(f"**Estado:** {decision_motor.get('decision', 'NO BET')}")
+                        for motivo in decision_motor.get("motivos_clave", []):
+                            st.write(f"- {motivo}")
+                    with decision_cols[1]:
+                        st.markdown("### Bloqueos")
+                        bloqueos = decision_motor.get("bloqueos", [])
+                        if bloqueos:
+                            for bloqueo in bloqueos:
+                                st.write(f"- {bloqueo}")
+                        else:
+                            st.write("- Sin bloqueos duros")
+                    with decision_cols[2]:
+                        st.markdown("### Entrada usada")
+                        entrada = resultado_motor.get("entrada_utilizada", {})
+                        datos_base = entrada.get("datos_base", {})
+                        manuales = entrada.get("manuales", {})
+                        st.write(f"- Goles base: {datos_base.get('goles_local', 'faltante')} / {datos_base.get('goles_visitante', 'faltante')}")
+                        st.write(f"- Forma: {datos_base.get('forma_local', 'faltante')} / {datos_base.get('forma_visitante', 'faltante')}")
+                        st.write(f"- xG: {manuales.get('xg_local', 'faltante')} / {manuales.get('xg_visitante', 'faltante')}")
+                        st.write(f"- ELO: {manuales.get('elo_local', 'faltante')} / {manuales.get('elo_visitante', 'faltante')}")
+                        st.write(f"- Contexto: {manuales.get('contexto_estructurado', 'faltante')}")
+                        st.write(f"- Favorito estructural: {str(favorito_estructural.get('dominante', 'parejo')).title()}")
 
-                    if cuota_prom > 0:
-                        st.info(f"Cuota promedio reportada por las IAs: **{cuota_prom:.2f}** (verifica en Bet365/Pinnacle)")
+                    with st.expander("Ver calidad del input"):
+                        st.write(f"Nivel: **{str(calidad_input.get('nivel', 'baja')).title()}**")
+                        bloques = calidad_input.get("bloques", {})
+                        if bloques:
+                            filas_calidad = [{"Bloque": k, "Puntos": v} for k, v in bloques.items()]
+                            st.dataframe(pd.DataFrame(filas_calidad), width="stretch", hide_index=True)
+                        st.write(
+                            f"Senal estructural -> Local: {favorito_estructural.get('score_local', 0)} | "
+                            f"Visitante: {favorito_estructural.get('score_visitante', 0)}"
+                        )
 
-                    with st.expander("Ver mapa de consenso real"):
-                        filas_consenso = []
-                        for (mercado_key, seleccion_key), votos in conteo.most_common():
-                            filas_consenso.append({
-                                "Mercado": mercado_key,
-                                "Seleccion": seleccion_key,
-                                "Votos": votos,
-                            })
-                        st.dataframe(pd.DataFrame(filas_consenso).astype(str), width='stretch')
+                    sistemas_rows = []
+                    for nombre_sistema, detalle in resultado_motor.get("sistemas", {}).items():
+                        fila = {
+                            "Sistema": nombre_sistema,
+                            "Veredicto": detalle.get("veredicto", ""),
+                        }
+                        for clave, valor in detalle.items():
+                            if clave != "veredicto":
+                                fila[clave] = "-" if valor is None else valor
+                        sistemas_rows.append(fila)
+                    st.markdown("### Lectura por sistema")
+                    st.caption("`-` significa que ese dato no aplica para ese sistema especifico. No es necesariamente un error.")
+                    st.dataframe(pd.DataFrame(sistemas_rows), width="stretch", hide_index=True)
 
-                    # Opcion de importar automaticamente
-                    st.markdown("---")
-                    if st.button("Importar picks automaticos a la base de datos"):
-                        try:
-                            registros_auto = []
-                            fecha_auto = datetime.now().strftime("%Y-%m-%d")
-                            for p in picks_emitidos:
-                                registros_auto.append({
-                                    "ia": p.get("ia", "Auto"),
-                                    "fecha": p.get("fecha") or fecha_auto,
-                                    "partido": p.get("partido", "Partido"),
-                                    "mercado": p.get("_mercado_norm", p.get("mercado", "Mercado")),
-                                    "seleccion": p.get("_seleccion_norm", p.get("seleccion", "Seleccion")),
-                                    "cuota": p.get("cuota", 0),
-                                    "confianza": p.get("confianza", 0),
-                                    "analisis_breve": (
-                                        f"Sistemas: {p.get('sistemas_favor', 0)}/8 | "
-                                        f"EV: {p.get('ev', 0):.2f} | "
-                                        f"{p.get('razonamiento', '')[:100]}"
-                                    ),
-                                    "tipo_pick": "principal",
-                                })
+                    candidatos_motor = resultado_motor.get("candidatos", [])
+                    if candidatos_motor:
+                        st.markdown("### Mercados evaluados por el motor")
+                        filas_candidatos = []
+                        for item in candidatos_motor:
+                            filas_candidatos.append(
+                                {
+                                    "Mercado": item.get("mercado", ""),
+                                    "Seleccion": item.get("seleccion", ""),
+                                    "Cuota": item.get("cuota", 0),
+                                    "Prob. modelo": round((item.get("prob_modelo", 0) or 0) * 100, 1),
+                                    "Prob. calibrada": round((item.get("prob_calibrada", item.get("prob_modelo", 0)) or 0) * 100, 1),
+                                    "Prob. implicita": round((item.get("prob_implicita", 0) or 0) * 100, 1),
+                                    "EV %": round((item.get("ev", 0) or 0) * 100, 1),
+                                    "EV calibrado %": round((item.get("ev_calibrado", item.get("ev", 0)) or 0) * 100, 1),
+                                    "Sistemas a favor": item.get("sistemas_a_favor", 0),
+                                    "Fit mercado": round((item.get("market_fit_score", 0) or 0) * 100, 1),
+                                    "Shrink %": round((item.get("shrink_factor", 0) or 0) * 100, 1),
+                                    "Empirico %": round((item.get("empirical_adjustment", 0) or 0) * 100, 1),
+                                    "Muestra emp.": item.get("empirical_sample", 0),
+                                    "Penalizacion": round((item.get("guardrail_penalty", 0) or 0) * 100, 1),
+                                    "Score": item.get("score_candidato", 0),
+                                    "Score ajustado": item.get("score_ajustado", 0),
+                                }
+                            )
+                        st.dataframe(pd.DataFrame(filas_candidatos), width="stretch", hide_index=True)
 
-                            df_auto = pd.DataFrame(registros_auto)
-                            batch = datetime.now().strftime("%Y%m%d_%H%M%S") + "_auto"
-                            resultado_guardado = save_picks(df_auto, batch)
-                            insertados = resultado_guardado.get("insertados", 0) if isinstance(resultado_guardado, dict) else 0
-                            duplicados = resultado_guardado.get("duplicados", 0) if isinstance(resultado_guardado, dict) else 0
-                            mensaje_extra = ""
-                            if insertados > 0:
-                                df_lote_auto = get_all_picks(incluir_alternativas=True)
-                                lote_auto = df_lote_auto[df_lote_auto["import_batch"] == batch].copy() if not df_lote_auto.empty and "import_batch" in df_lote_auto.columns else pd.DataFrame()
-                                if not lote_auto.empty:
-                                    auto_pub = _enviar_pick_telegram_si_activo(lote_auto.iloc[0].to_dict())
-                                    if auto_pub:
-                                        _, detalle = auto_pub
-                                        mensaje_extra = f" | Telegram: {detalle}"
-                            st.session_state.auto_import_feedback = {
-                                "tipo": "ok",
-                                "mensaje": f"Importacion completada. Insertados: {insertados} | Duplicados: {duplicados} | batch: {batch}{mensaje_extra}",
-                            }
-                            st.rerun()
-                        except Exception as e:
-                            st.session_state.auto_import_feedback = {
-                                "tipo": "error",
-                                "mensaje": f"Error al importar: {e}",
-                            }
-                            st.rerun()
-                elif picks_emitidos and not quorum_ok:
-                    st.warning("Hay picks emitidos, pero no se habilita consolidacion ni guardado porque el quorum minimo no se cumplio.")
+                    if resultado_motor.get("riesgos"):
+                        st.markdown("### Riesgos")
+                        for riesgo in resultado_motor.get("riesgos", []):
+                            st.write(f"- {riesgo}")
 
-                    st.markdown("---")
-                    with st.expander("Diagnostico detallado"):
-                        st.markdown("**Auditoria de calidad por IA**")
-                        st.dataframe(df_auditoria, width='stretch')
+                    if resultado_motor.get("datos_insuficientes"):
+                        st.markdown("### Datos insuficientes")
+                        st.write(", ".join(resultado_motor.get("datos_insuficientes", [])))
 
-                        if picks_emitidos:
-                            with st.expander("Mapa de consenso real"):
-                                filas_consenso = []
-                                for (mercado_key, seleccion_key), votos in conteo.most_common():
-                                    filas_consenso.append({
-                                        "Mercado": mercado_key,
-                                        "Seleccion": seleccion_key,
-                                        "Votos": votos,
-                                    })
-                                st.dataframe(pd.DataFrame(filas_consenso).astype(str), width='stretch')
+                    with st.expander("Ver salida tecnica del motor"):
+                        st.json(resultado_motor)
 
-                        with st.expander("Salida JSON interpretada"):
-                            st.json(picks_auditados)
-
-                        with st.expander("Visualizador de salida cruda por IA"):
-                            st.caption("Aqui puedes ver exactamente lo que devolvio cada modelo antes de que la app lo resumiera.")
-                            for r in resultados:
-                                nombre_ia = r.get("ia", "desconocida")
-                                estado_ia = r.get("status", "desconocido")
-                                st.markdown(f"**{nombre_ia}**")
-                                st.caption(f"Estado: {estado_ia}")
-
-                                if estado_ia == "ok":
-                                    data_ia = r.get("data", {})
-                                    if data_ia:
-                                        col_raw_1, col_raw_2 = st.columns([1, 2])
-                                        with col_raw_1:
-                                            st.json(data_ia)
-                                        with col_raw_2:
-                                            st.text_area(
-                                                f"Respuesta original - {nombre_ia}",
-                                                value=r.get("raw_output", ""),
-                                                height=220,
-                                                key=f"raw_ok_{nombre_ia}",
-                                            )
-                                    else:
-                                        st.text_area(
-                                            f"Respuesta original - {nombre_ia}",
-                                            value=r.get("raw_output", ""),
-                                            height=220,
-                                            key=f"raw_only_{nombre_ia}",
-                                        )
+                    if pick_motor.get("emitido"):
+                        pick_motor_publicable = {
+                            "partido": resultado_motor.get("partido", ""),
+                            "mercado": pick_motor.get("mercado", ""),
+                            "seleccion": pick_motor.get("seleccion", ""),
+                            "cuota": float(pick_motor.get("cuota", 0) or 0),
+                            "confianza": float(pick_motor.get("confianza", 0) or 0),
+                            "analisis_breve": pick_motor.get("razonamiento", ""),
+                            "competicion": datos_motor.get("liga_nombre", ""),
+                            "ia": "Motor-Propio",
+                        }
+                        st.markdown("### Publicacion del motor")
+                        from pdf_generator import generar_pdf_pick_social
+                        from services.telegram_service import telegram_config_ok, enviar_paquete_telegram
+                        copy_motor = _copy_pick_social(
+                            pick_motor_publicable,
+                            pick_motor.get("razonamiento", ""),
+                            int(float(pick_motor.get("confianza", 0) or 0) * 100),
+                            float(pick_motor.get("cuota", 0) or 0),
+                        )
+                        pdf_motor_social = generar_pdf_pick_social(pick_motor_publicable)
+                        pub1, pub2, pub3 = st.columns(3)
+                        pub1.download_button(
+                            "Descargar copy",
+                            copy_motor,
+                            file_name=f"motor_pick_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                            mime="text/plain",
+                            use_container_width=True,
+                        )
+                        pub2.download_button(
+                            "Descargar PDF social",
+                            pdf_motor_social,
+                            file_name=f"motor_pick_social_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+                        if telegram_config_ok():
+                            if pub3.button("Enviar pack a Telegram", use_container_width=True):
+                                ok, mensaje = enviar_paquete_telegram(
+                                    copy_motor,
+                                    pdf_motor_social,
+                                    f"motor_pick_social_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                                    caption=f"Motor propio | {pick_motor_publicable.get('partido', '')}",
+                                )
+                                if ok:
+                                    st.success(mensaje)
                                 else:
-                                    st.error(r.get("error", "Error desconocido"))
-                                    st.text_area(
-                                        f"Respuesta original - {nombre_ia}",
-                                        value=r.get("raw_output", ""),
-                                        height=220,
-                                        key=f"raw_fail_{nombre_ia}",
-                                    )
-                                st.divider()
+                                    st.error(mensaje)
+                        else:
+                            pub3.caption("Telegram no configurado")
+
+                        if st.button("Guardar pick del motor en la base", use_container_width=True):
+                            df_motor = pd.DataFrame([
+                                {
+                                    "fecha": resultado_motor.get("fecha", datetime.now().strftime("%Y-%m-%d")),
+                                    "partido": resultado_motor.get("partido", ""),
+                                    "ia": "Motor-Propio",
+                                    "mercado": pick_motor.get("mercado", ""),
+                                    "seleccion": pick_motor.get("seleccion", ""),
+                                    "cuota": float(pick_motor.get("cuota", 0) or 0),
+                                    "confianza": float(pick_motor.get("confianza", 0) or 0),
+                                    "analisis_breve": pick_motor.get("razonamiento", ""),
+                                    "competicion": datos_motor.get("liga_nombre", ""),
+                                    "tipo_pick": "principal",
+                                }
+                            ])
+                            batch_motor = f"motor_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                            resultado_save = save_picks(df_motor, batch_motor)
+                            insertados = resultado_save.get("insertados", 0)
+                            duplicados = resultado_save.get("duplicados", 0)
+                            save_motor_pick_log(
+                                resultado_motor,
+                                datos_motor=datos_motor,
+                                manual_data=manual_motor,
+                                saved_to_picks=True,
+                                saved_batch=batch_motor,
+                            )
+                            auto_pub = _enviar_pick_telegram_si_activo(pick_motor_publicable)
+                            mensaje_extra = ""
+                            if auto_pub:
+                                ok_pub, detalle_pub = auto_pub
+                                mensaje_extra = f" | Telegram: {detalle_pub}"
+                            st.success(f"Motor guardado. Insertados: {insertados} | Duplicados: {duplicados} | batch: {batch_motor}{mensaje_extra}")
+
+
+                    st.markdown("---")
+                    with st.expander("🤖 Validación Cruzada Multi-IA (Sólo consulta)", expanded=False):
+                        st.markdown(
+                            "Consulta la opinión de **3 analistas automáticos** configurados con perfiles distintos. "
+                            "El Motor Propio sigue siendo la única fuente oficial de decisión; esto es solo contraste."
+                        )
+                        try:
+                            from services.ai_analysis import ejecutar_analisis_automatico, verificar_apis_configuradas, PERSONALIDADES
+                        except ImportError:
+                            st.error("No se encontró services/ai_analysis.py.")
+                            st.stop()
+                        
+                        st.markdown("### Pega aquí el análisis del Investigador (Perplexity)")
+                        
+                        valor_contexto = ""
+                        try:
+                            if "contexto_motor" in locals() or "contexto_motor" in globals():
+                                valor_contexto = contexto_motor
+                        except: pass
+                        
+                        if "prompt_auto_operacion" not in st.session_state:
+                            st.session_state.prompt_auto_operacion = valor_contexto
+                            
+                        prompt_investigador = st.text_area(
+                            "Análisis base",
+                            value=st.session_state.prompt_auto_operacion,
+                            height=200,
+                            key="prompt_auto_operacion_input"
+                        )
+                        
+                        if "auto_resultados_op" not in st.session_state:
+                            st.session_state.auto_resultados_op = None
+                        
+                        if st.button("Ejecutar validación con IAs", type="secondary"):
+                            if not prompt_investigador.strip():
+                                st.warning("Carga el análisis base primero.")
+                            else:
+                                prompt_base = cargar_prompt_automatico()
+                                prompt_final = prompt_base.replace(
+                                    "[resumen compacto del investigador]",
+                                    prompt_investigador.strip(),
+                                )
+                                import time
+                                import queue as queue_module
+                                import threading
+                                
+                                t_inicio = time.time()
+                                cola = queue_module.Queue()
+                                resultado_container = [None]
+                                def correr():
+                                    def on_resultado(r): cola.put(r)
+                                    resultado_container[0] = ejecutar_analisis_automatico(prompt_final, callback=on_resultado)
+                                    cola.put("__FIN__")
+                                hilo = threading.Thread(target=correr)
+                                hilo.start()
+                                st.markdown("#### Progreso")
+                                panel = st.empty()
+                                estados_ia = {n: "evaluando..." for n in ["Auto-Ollama-Conservador", "Auto-Gemini-Contextual", "Auto-Groq-Contraste"]}
+                                def render_panel(estados_dict):
+                                    filas = ["| IA | Veredicto |", "|---|---|"]
+                                    for n, s in estados_dict.items():
+                                        filas.append(f"| {n} | {s} |")
+                                    panel.markdown("\n".join(filas))
+                                render_panel(estados_ia)
+                                while True:
+                                    try:
+                                        item = cola.get(timeout=1)
+                                        if item == "__FIN__": break
+                                        ia_name = item.get("ia", "desconocida")
+                                        if item.get("status") == "ok":
+                                            estados_ia[ia_name] = f"✅ {item.get('data', {}).get('decision', 'NO BET')}"
+                                        else:
+                                            estados_ia[ia_name] = "❌ Error"
+                                    except: pass
+                                    render_panel(estados_ia)
+                                hilo.join()
+                                panel.empty()
+                                if resultado_container[0]:
+                                    st.session_state.auto_resultados_op = resultado_container[0][0]
+                        
+                        resultados = st.session_state.auto_resultados_op
+                        if resultados:
+                            st.success(f"{len(resultados)} analistas contestaron.")
+                            for r in resultados:
+                                if r.get("status") == "ok":
+                                    p = r["data"]
+                                    st.markdown(f"**{p.get('ia', '?')}** - {p.get('decision', 'NO BET')}")
+                                    st.write(f"- Mercado: {p.get('mercado', '-')} | Selección: {p.get('seleccion', '-')}")
+                                    try:
+                                        cuota_f = float(p.get('cuota', 0) or 0)
+                                        confianza_f = float(p.get('confianza', 0) or 0)
+                                    except:
+                                        cuota_f = 0.0
+                                        confianza_f = 0.0
+                                    st.write(f"- Cuota: {cuota_f:.2f} | Confianza: {confianza_f*100:.0f}%")
+                                    st.info(p.get('razonamiento', 'Sin razonamiento'))
+                                else:
+                                    st.error(f"**{r.get('ia')}**: Falló - {r.get('error')}")
 
 # ====================== JUEZ PONDERADO ======================
-with tab8:
+with tab_lab:
+    st.divider()
+    st.header("Laboratorio de Consenso")
     _render_section_banner(
-        "Consenso ponderado",
-        "Consolida picks pendientes con aprendizaje historico y revisa rapidamente si la base actual tiene suficiente material para un veredicto serio.",
-        "Consenso",
+        "Lab de consenso",
+        "Herramienta secundaria para contrastar salidas multi-IA. Ya no es el motor principal del producto.",
+        "Lab",
     )
-    st.subheader("Consenso ponderado con aprendizaje historico")
+    st.subheader("Consenso ponderado multi-IA")
     st.markdown("Consolida todos los picks pendientes usando los pesos de cada IA basados en su rendimiento historico.")
 
     pesos = {}
@@ -4085,7 +4201,10 @@ with tab8:
     else:
         st.warning("No se encontro pesos_ia.json. Se utilizaran pesos neutros (1.0) para todas las IAs.")
 
-    df = get_all_picks()
+    df = fetch_backend_picks()
+    if df is None:
+        st.error("Motor no disponible: backend no responde")
+        st.stop()
     if df.empty:
         st.info("No hay picks almacenados en la base de datos.")
     else:
@@ -4123,42 +4242,331 @@ with tab8:
                 st.success("Veredicto exportado en veredicto_final.json")
 
 # ====================== APRENDIZAJE ======================
-with tab9:
+    st.divider()
+    st.header("Laboratorio de Aprendizaje")
     _render_section_banner(
-        "Aprendizaje y pesos",
-        "Recalibra el sistema segun el rendimiento historico y revisa rapidamente el impacto esperado sobre los pesos por IA.",
-        "Aprendizaje",
+        "Aprendizaje del motor",
+        "Lee el rendimiento historico del Motor Propio y detecta que mercados, niveles de confianza y perfiles de pick estan funcionando mejor.",
+        "Motor",
     )
-    st.subheader("Aprendizaje y recalibracion de pesos")
-    st.markdown("Recalcula los pesos con base en el rendimiento historico (Shrinkage Bayesiano + Sharpe Ratio).")
+    st.subheader("Tablero de aprendizaje del Motor Propio")
+    st.caption("Aqui ya no miramos pesos de IAs. Miramos como se esta comportando el motor cuando sus picks se cierran en la base.")
 
-    if st.button("Recalcular pesos ahora"):
-        with st.spinner("Calculando nuevos pesos..."):
-            try:
-                from analizar_rendimiento import calcular_metricas
-                df_resultados = calcular_metricas()
-                st.success("Pesos recalculados correctamente.")
-                if not df_resultados.empty:
-                    ar1, ar2, ar3, ar4 = st.columns(4)
-                    ar1.metric("IAs analizadas", len(df_resultados))
-                    ar2.metric("Picks acumulados", int(df_resultados["picks"].fillna(0).sum()) if "picks" in df_resultados.columns else 0)
-                    ar3.metric("ROI medio", f"{df_resultados['roi'].fillna(0).mean():.2f}" if "roi" in df_resultados.columns else "0.00")
-                    ar4.metric("Sharpe medio", f"{df_resultados['sharpe'].fillna(0).mean():.2f}" if "sharpe" in df_resultados.columns else "0.00")
-                    cols_metricas = [c for c in ['ia', 'picks', 'roi', 'sharpe', 'peso_nuevo'] if c in df_resultados.columns]
-                    st.dataframe(df_resultados[cols_metricas], width='stretch')
+    df_learning = fetch_backend_picks(incluir_alternativas=True)
+    if df_learning is None:
+        st.error("Aprendizaje no disponible: backend no responde")
+        st.stop()
+    df_motor_logs = get_motor_pick_logs(limit=1000)
+    if df_learning.empty:
+        st.info("Todavia no hay picks en base para construir aprendizaje.")
+    else:
+        df_motor_all = df_learning[
+            (df_learning["ia"].astype(str) == "Motor-Propio")
+            & (df_learning["tipo_pick"].astype(str) == "principal")
+        ].copy()
+        df_motor_closed = df_motor_all[df_motor_all["resultado"].isin(["ganada", "perdida", "media"])].copy() if not df_motor_all.empty else pd.DataFrame()
+
+        if df_motor_all.empty:
+            st.info("Aun no hay picks guardados del Motor Propio.")
+        else:
+            total_motor = len(df_motor_all)
+            cerrados_motor = len(df_motor_closed)
+            pendientes_motor = int((df_motor_all["resultado"] == "pendiente").sum()) if "resultado" in df_motor_all.columns else 0
+            ganadas_motor = int((df_motor_closed["resultado"] == "ganada").sum()) if not df_motor_closed.empty else 0
+            medias_motor = int((df_motor_closed["resultado"] == "media").sum()) if not df_motor_closed.empty else 0
+            perdidas_motor = int((df_motor_closed["resultado"] == "perdida").sum()) if not df_motor_closed.empty else 0
+            acierto_motor = ((ganadas_motor + (medias_motor * 0.5)) / max(1, cerrados_motor) * 100) if cerrados_motor else 0
+            roi_motor = (float(df_motor_closed["ganancia"].sum()) / float(df_motor_closed["stake"].sum()) * 100) if cerrados_motor and float(df_motor_closed["stake"].sum() or 0) else 0
+
+            am1, am2, am3, am4, am5 = st.columns(5)
+            am1.metric("Picks del motor", total_motor)
+            am2.metric("Cerrados", cerrados_motor)
+            am3.metric("Pendientes", pendientes_motor)
+            am4.metric("Acierto ponderado", f"{acierto_motor:.1f}%")
+            am5.metric("ROI motor", f"{roi_motor:.2f}%")
+
+            am6, am7, am8 = st.columns(3)
+            am6.metric("Ganadas", ganadas_motor)
+            am7.metric("Medias", medias_motor)
+            am8.metric("Perdidas", perdidas_motor)
+
+            if not df_motor_logs.empty:
+                logs_total = len(df_motor_logs)
+                logs_pick = int(pd.to_numeric(df_motor_logs["emitido"], errors="coerce").fillna(0).sum())
+                logs_no_bet = logs_total - logs_pick
+                logs_saved = int(pd.to_numeric(df_motor_logs["saved_to_picks"], errors="coerce").fillna(0).sum())
+                lg1, lg2, lg3 = st.columns(3)
+                lg1.metric("Corridas del motor", logs_total)
+                lg2.metric("PICK emitidos", logs_pick)
+                lg3.metric("NO BET", logs_no_bet)
+                st.caption(f"Corridas guardadas en log: {logs_total} | Corridas que terminaron en pick guardado: {logs_saved}")
+
+                def _safe_json_payload(value, fallback):
+                    if isinstance(value, (dict, list)):
+                        return value
+                    if isinstance(value, str) and value.strip():
+                        try:
+                            return json.loads(value)
+                        except Exception:
+                            return fallback
+                    return fallback
+
+                df_logs_view = df_motor_logs.copy()
+                df_logs_view["mercado"] = df_logs_view["mercado"].fillna("Sin mercado").replace("", "Sin mercado")
+                df_logs_view["emitido"] = pd.to_numeric(df_logs_view["emitido"], errors="coerce").fillna(0).astype(int)
+                df_logs_view["saved_to_picks"] = pd.to_numeric(df_logs_view["saved_to_picks"], errors="coerce").fillna(0).astype(int)
+                df_logs_view["valor_esperado"] = pd.to_numeric(df_logs_view["valor_esperado"], errors="coerce")
+                df_logs_view["confianza"] = pd.to_numeric(df_logs_view["confianza"], errors="coerce")
+                df_logs_view["calidad_input"] = pd.to_numeric(df_logs_view["calidad_input"], errors="coerce")
+                df_logs_view["market_fit_score"] = pd.to_numeric(df_logs_view["market_fit_score"], errors="coerce")
+                df_logs_view["guardrail_penalty"] = pd.to_numeric(df_logs_view["guardrail_penalty"], errors="coerce")
+                df_logs_view["decision_payload"] = df_logs_view["decision_json"].apply(lambda v: _safe_json_payload(v, {}))
+                df_logs_view["bloqueos_list"] = df_logs_view["decision_payload"].apply(
+                    lambda d: d.get("bloqueos", []) if isinstance(d, dict) else []
+                )
+                df_logs_view["motivos_list"] = df_logs_view["decision_payload"].apply(
+                    lambda d: d.get("motivos_clave", []) if isinstance(d, dict) else []
+                )
+                df_logs_view["bloqueos_count"] = df_logs_view["bloqueos_list"].apply(lambda x: len(x) if isinstance(x, list) else 0)
+                df_logs_view["decision_text"] = df_logs_view["decision_payload"].apply(
+                    lambda d: d.get("decision", "NO BET") if isinstance(d, dict) else "NO BET"
+                )
+
+                st.markdown("### Lectura operativa de logs")
+                oper1, oper2, oper3, oper4 = st.columns(4)
+                pick_rate = (logs_pick / max(1, logs_total)) * 100
+                ev_emitidos = float(df_logs_view.loc[df_logs_view["emitido"] == 1, "valor_esperado"].mean()) if logs_pick else 0.0
+                confianza_emitidos = float(df_logs_view.loc[df_logs_view["emitido"] == 1, "confianza"].mean()) if logs_pick else 0.0
+                calidad_media = float(df_logs_view["calidad_input"].mean()) if not df_logs_view.empty else 0.0
+                oper1.metric("Pick rate", f"{pick_rate:.1f}%")
+                oper2.metric("EV medio emitidos", f"{ev_emitidos * 100:.1f}%")
+                oper3.metric("Confianza media emitidos", f"{confianza_emitidos * 100:.1f}%")
+                oper4.metric("Calidad input media", f"{calidad_media:.1f}/100")
+
+                st.markdown("### Donde emite y donde se bloquea")
+                resumen_logs_mercado = (
+                    df_logs_view.groupby("mercado", dropna=False)
+                    .agg(
+                        corridas=("mercado", "count"),
+                        picks_emitidos=("emitido", "sum"),
+                        saved_a_base=("saved_to_picks", "sum"),
+                        confianza_media=("confianza", "mean"),
+                        ev_medio=("valor_esperado", "mean"),
+                        calidad_media=("calidad_input", "mean"),
+                        fit_medio=("market_fit_score", "mean"),
+                        penalizacion_media=("guardrail_penalty", "mean"),
+                    )
+                    .reset_index()
+                )
+                resumen_logs_mercado["pick_rate"] = (
+                    resumen_logs_mercado["picks_emitidos"] / resumen_logs_mercado["corridas"].clip(lower=1) * 100
+                ).round(1)
+                for col in ["confianza_media", "ev_medio", "calidad_media", "fit_medio", "penalizacion_media"]:
+                    resumen_logs_mercado[col] = pd.to_numeric(resumen_logs_mercado[col], errors="coerce").fillna(0)
+                resumen_logs_mercado["confianza_media"] = (resumen_logs_mercado["confianza_media"] * 100).round(1)
+                resumen_logs_mercado["ev_medio"] = (resumen_logs_mercado["ev_medio"] * 100).round(1)
+                resumen_logs_mercado["calidad_media"] = resumen_logs_mercado["calidad_media"].round(1)
+                resumen_logs_mercado["fit_medio"] = resumen_logs_mercado["fit_medio"].round(2)
+                resumen_logs_mercado["penalizacion_media"] = resumen_logs_mercado["penalizacion_media"].round(2)
+                st.dataframe(
+                    resumen_logs_mercado.sort_values(["corridas", "pick_rate"], ascending=[False, False]),
+                    width='stretch',
+                    hide_index=True,
+                )
+
+                bloqueos_flat = []
+                for items in df_logs_view["bloqueos_list"]:
+                    if isinstance(items, list):
+                        bloqueos_flat.extend([str(x).strip() for x in items if str(x).strip()])
+                if bloqueos_flat:
+                    st.markdown("### Bloqueos mas repetidos del motor")
+                    df_bloqueos = (
+                        pd.Series(bloqueos_flat, name="bloqueo")
+                        .value_counts()
+                        .reset_index()
+                    )
+                    df_bloqueos.columns = ["bloqueo", "veces"]
+                    df_bloqueos["% logs"] = (df_bloqueos["veces"] / max(1, logs_total) * 100).round(1)
+                    st.dataframe(df_bloqueos, width='stretch', hide_index=True)
+
+                    top_bloqueo = df_bloqueos.iloc[0]
+                    st.info(
+                        f"Bloqueo dominante actual: {top_bloqueo['bloqueo']} "
+                        f"({int(top_bloqueo['veces'])} veces, {top_bloqueo['% logs']:.1f}% de las corridas)."
+                    )
+
+                st.markdown("### Sensibilidad por calidad del input")
+                df_logs_view["calidad_bucket"] = pd.cut(
+                    df_logs_view["calidad_input"].fillna(0),
+                    bins=[-0.01, 59.99, 74.99, 89.99, 100.0],
+                    labels=["<=59", "60-74", "75-89", "90-100"],
+                )
+                resumen_calidad_logs = (
+                    df_logs_view.groupby("calidad_bucket", dropna=False)
+                    .agg(
+                        corridas=("calidad_bucket", "count"),
+                        picks_emitidos=("emitido", "sum"),
+                        confianza_media=("confianza", "mean"),
+                        ev_medio=("valor_esperado", "mean"),
+                    )
+                    .reset_index()
+                )
+                resumen_calidad_logs["pick_rate"] = (
+                    resumen_calidad_logs["picks_emitidos"] / resumen_calidad_logs["corridas"].clip(lower=1) * 100
+                ).round(1)
+                resumen_calidad_logs["confianza_media"] = (
+                    pd.to_numeric(resumen_calidad_logs["confianza_media"], errors="coerce").fillna(0) * 100
+                ).round(1)
+                resumen_calidad_logs["ev_medio"] = (
+                    pd.to_numeric(resumen_calidad_logs["ev_medio"], errors="coerce").fillna(0) * 100
+                ).round(1)
+                st.dataframe(resumen_calidad_logs, width='stretch', hide_index=True)
+
+                st.markdown("### Calibracion sugerida por el laboratorio")
+                recomendaciones = []
+
+                if pick_rate < 12:
+                    recomendaciones.append("El motor esta demasiado conservador: revisa umbrales globales de confianza y sistemas minimos a favor.")
+                elif pick_rate > 45:
+                    recomendaciones.append("El motor esta emitiendo demasiado: conviene endurecer guardrails o fit de mercado antes de deteriorar ROI.")
+
+                if calidad_media >= 80 and pick_rate < 18:
+                    recomendaciones.append("Con calidad de input alta el pick rate sigue bajo: el cuello parece estar en reglas de emision, no en datos.")
+
+                if bloqueos_flat:
+                    bloqueo_dominante = str(df_bloqueos.iloc[0]["bloqueo"]).lower()
+                    if "menos de 5 sistemas" in bloqueo_dominante:
+                        recomendaciones.append("Prueba una regla condicional de 4 apoyos cuando el mercado tenga fit alto y la penalizacion estructural sea baja.")
+                    if "confianza por debajo" in bloqueo_dominante:
+                        recomendaciones.append("Revisa la formula de confianza: el motor podria estar descontando demasiado aun con EV y calidad altos.")
+                    if "calidad de input" in bloqueo_dominante:
+                        recomendaciones.append("El principal freno es la calidad del partido preparado: conviene priorizar autocompletado y datos faltantes antes de tocar el motor.")
+                    if "sin confirmacion especifica" in bloqueo_dominante:
+                        recomendaciones.append("Falta especializacion por mercado: refuerza reglas propias de 1X2, BTTS y Over/Under antes de bajar umbrales.")
+
+                mercados_a_premiar = resumen_logs_mercado[
+                    (resumen_logs_mercado["corridas"] >= 5)
+                    & (resumen_logs_mercado["pick_rate"] >= 20)
+                    & (resumen_logs_mercado["fit_medio"] >= 0.18)
+                    & (resumen_logs_mercado["penalizacion_media"] <= 0.25)
+                ].sort_values(["pick_rate", "ev_medio"], ascending=[False, False])
+                if not mercados_a_premiar.empty:
+                    mejor_lab = mercados_a_premiar.iloc[0]
+                    recomendaciones.append(
+                        f"Mercado con mejor perfil operativo actual: {mejor_lab['mercado']}. "
+                        f"Puedes testear un trato algo mas agresivo ahi porque ya muestra fit medio {mejor_lab['fit_medio']:.2f} y pick rate {mejor_lab['pick_rate']:.1f}%."
+                    )
+
+                mercados_atascados = resumen_logs_mercado[
+                    (resumen_logs_mercado["corridas"] >= 5)
+                    & (resumen_logs_mercado["pick_rate"] <= 10)
+                    & (resumen_logs_mercado["ev_medio"] >= 8)
+                ].sort_values(["ev_medio", "corridas"], ascending=[False, False])
+                if not mercados_atascados.empty:
+                    atascado = mercados_atascados.iloc[0]
+                    recomendaciones.append(
+                        f"Mercado atascado pese a EV alto: {atascado['mercado']}. "
+                        f"Revisa si el fit o la penalizacion lo estan frenando demasiado."
+                    )
+
+                calidad_alta_row = resumen_calidad_logs[resumen_calidad_logs["calidad_bucket"] == "90-100"]
+                if not calidad_alta_row.empty:
+                    pick_rate_calidad_alta = float(calidad_alta_row.iloc[0]["pick_rate"])
+                    if pick_rate_calidad_alta < 20:
+                        recomendaciones.append("Incluso con calidad 90-100 el motor emite poco: toca recalibrar decision, no solo seguir pidiendo mejores datos.")
+
+                if recomendaciones:
+                    for rec in recomendaciones[:5]:
+                        st.write(f"- {rec}")
                 else:
-                    st.info("El recalculo no devolvio filas.")
-            except Exception as e:
-                st.error(f"Error al recalcular pesos: {e}")
+                    st.success("Aun no hay patron fuerte de bloqueo. Sigue acumulando logs para calibrar con una muestra mas estable.")
+
+            if cerrados_motor < 5:
+                st.warning("Aun hay poca muestra cerrada. Usa esta lectura como orientacion, no como verdad estadistica fuerte.")
+
+            if not df_motor_closed.empty:
+                df_motor_closed["mercado"] = df_motor_closed["mercado"].fillna("Sin mercado").astype(str)
+                df_motor_closed["confianza_bucket"] = pd.cut(
+                    pd.to_numeric(df_motor_closed["confianza"], errors="coerce").fillna(0),
+                    bins=[-0.01, 0.60, 0.70, 0.80, 1.00],
+                    labels=["<=60%", "61-70%", "71-80%", ">80%"],
+                )
+                df_motor_closed["acierto_score"] = df_motor_closed["resultado"].map({"ganada": 1.0, "media": 0.5, "perdida": 0.0}).fillna(0)
+
+                st.markdown("### Lectura por mercado")
+                resumen_mercado = (
+                    df_motor_closed.groupby("mercado", dropna=False)
+                    .agg(
+                        picks=("mercado", "count"),
+                        acierto=("acierto_score", "mean"),
+                        roi=("ganancia", lambda s: float(s.sum()) / max(1e-9, float(df_motor_closed.loc[s.index, "stake"].sum()))),
+                        cuota_media=("cuota", "mean"),
+                    )
+                    .reset_index()
+                )
+                resumen_mercado["acierto"] = (resumen_mercado["acierto"] * 100).round(1)
+                resumen_mercado["roi"] = (resumen_mercado["roi"] * 100).round(2)
+                resumen_mercado["cuota_media"] = resumen_mercado["cuota_media"].round(2)
+                st.dataframe(resumen_mercado.sort_values(["picks", "roi"], ascending=[False, False]), width='stretch', hide_index=True)
+
+                st.markdown("### Lectura por confianza declarada")
+                resumen_conf = (
+                    df_motor_closed.groupby("confianza_bucket", dropna=False)
+                    .agg(
+                        picks=("confianza_bucket", "count"),
+                        acierto=("acierto_score", "mean"),
+                        roi=("ganancia", lambda s: float(s.sum()) / max(1e-9, float(df_motor_closed.loc[s.index, "stake"].sum()))),
+                    )
+                    .reset_index()
+                )
+                resumen_conf["acierto"] = (resumen_conf["acierto"] * 100).round(1)
+                resumen_conf["roi"] = (resumen_conf["roi"] * 100).round(2)
+                st.dataframe(resumen_conf, width='stretch', hide_index=True)
+
+                st.markdown("### Reglas sugeridas para la siguiente calibracion")
+                top_markets = resumen_mercado[resumen_mercado["picks"] >= 2].sort_values("roi", ascending=False)
+                weak_markets = resumen_mercado[resumen_mercado["picks"] >= 2].sort_values("roi", ascending=True)
+                if not top_markets.empty:
+                    mejor = top_markets.iloc[0]
+                    st.success(f"Mercado a premiar: {mejor['mercado']} | ROI {mejor['roi']:.2f}% | Acierto {mejor['acierto']:.1f}%")
+                if not weak_markets.empty:
+                    peor = weak_markets.iloc[0]
+                    st.warning(f"Mercado a vigilar: {peor['mercado']} | ROI {peor['roi']:.2f}% | Acierto {peor['acierto']:.1f}%")
+
+                conf_floja = resumen_conf[resumen_conf["roi"] < 0]
+                if not conf_floja.empty:
+                    st.info("Si una banda de confianza sigue en negativo con suficiente muestra, conviene endurecer el stake o exigir mas filtros ahi.")
+
+                with st.expander("Ver picks cerrados del motor"):
+                    cols_motor = [c for c in ["fecha", "partido", "mercado", "seleccion", "cuota", "confianza", "stake", "resultado", "ganancia"] if c in df_motor_closed.columns]
+                    st.dataframe(df_motor_closed[cols_motor].copy(), width='stretch', hide_index=True)
+
+                with st.expander("Comparativa rapida: Motor vs resto del sistema"):
+                    df_otros = df_learning[
+                        (df_learning["ia"].astype(str) != "Motor-Propio")
+                        & (df_learning["tipo_pick"].astype(str) == "principal")
+                        & (df_learning["resultado"].isin(["ganada", "perdida", "media"]))
+                    ].copy()
+                    if df_otros.empty:
+                        st.info("Aun no hay muestra comparable del resto del sistema.")
+                    else:
+                        otros_acierto = (df_otros["resultado"].map({"ganada": 1.0, "media": 0.5, "perdida": 0.0}).fillna(0).mean() * 100)
+                        otros_roi = (float(df_otros["ganancia"].sum()) / max(1e-9, float(df_otros["stake"].sum())) * 100)
+                        cmp1, cmp2 = st.columns(2)
+                        cmp1.metric("Acierto Motor vs resto", f"{acierto_motor:.1f}%", f"{acierto_motor - otros_acierto:+.1f}%")
+                        cmp2.metric("ROI Motor vs resto", f"{roi_motor:.2f}%", f"{roi_motor - otros_roi:+.2f}%")
+            else:
+                st.info("El Motor Propio ya tiene picks guardados, pero aun no hay cierres para aprender.")
 
 # ====================== COMPARATIVA ESPEJO ======================
-with tab10:
+    st.divider()
+    st.header("Comparativa de Modelos IA")
     _render_section_banner(
-        "Comparativa espejo",
-        "Compara flujo manual vs automatico por partido y construye evidencia real de cual metodologia te conviene mas.",
-        "Espejo",
+        "Lab comparativo",
+        "Compara metodologias y deja evidencia historica. Idealmente migrara a Motor Propio vs Analisis IA.",
+        "Lab",
     )
-    st.subheader("Comparativa espejo: Manual vs Automatico")
+    st.subheader("Comparativa espejo")
     st.markdown("Registra solo el pick principal manual y el pick principal automatico. La idea es comparar cual flujo rindio mejor cuando el partido cierre.")
 
     comparativas = cargar_comparativas()
@@ -4270,10 +4678,10 @@ with tab10:
                     int((cerrados["ganador_caso"] == "Empate").sum()) + int((cerrados["ganador_caso"] == "Ambos fallaron").sum()),
                 )
     else:
-        st.info("Todavia no hay casos espejo guardados.")
+        _render_empty_state("Sin comparativas registradas", "Aqui apareceran los casos espejo (Manual vs Automatico) para medir el rendimiento de tus flujos.", "⚖️")
 
 # ====================== USUARIOS ======================
-with tab11:
+with tab_users:
     _render_section_banner(
         "Gestion de usuarios",
         "Administra miembros reales, crea accesos, controla estados y revisa rapidamente la base de cuentas activas.",
@@ -4336,7 +4744,7 @@ with tab11:
                 | df_users_view["email"].fillna("").astype(str).str.lower().str.contains(patron, na=False)
             ]
         st.caption(f"Usuarios visibles: {len(df_users_view)}")
-        columnas_users = [c for c in ["id", "username", "display_name", "email", "role", "active", "must_change_password", "last_login", "created_at"] if c in df_users_view.columns]
+        columnas_users = [c for c in ["id", "username", "display_name", "email", "role", "active", "subscription_plan", "must_change_password", "last_login", "created_at"] if c in df_users_view.columns]
         st.dataframe(df_users_view[columnas_users].astype(str), width="stretch")
         st.markdown("### Cambiar estado")
         usuarios_opciones = {
@@ -4355,303 +4763,50 @@ with tab11:
                 st.success(mensaje)
                 st.rerun()
 
-# ====================== MOTOR PROPIO ======================
-with tab12:
-    _render_section_banner(
-        "Motor propio",
-        "Ejecuta la primera fase del motor matematico propio para que el pick salga del sistema y no de IAs externas.",
-        "Motor Core",
-    )
-    st.subheader("Motor de picks autonomo")
-    st.markdown(
-        "Esta capa usa **Poisson, Dixon-Coles, ELO, forma ponderada y mercado eficiente**. "
-        "La idea es que el cerebro principal del pick viva aqui y las IAs queden solo para redactar."
-    )
-
-    datos_motor = st.session_state.get("prepared_match_data")
-    if not datos_motor:
-        st.info("Primero prepara un partido en la pestana `Preparar Partido`. Luego vuelve aqui para correr el motor propio.")
-    else:
-        manual_preparado = st.session_state.get("prepared_match_manual_data", {}) or {}
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Partido", datos_motor.get("partido", "-"))
-        m2.metric("Fecha", datos_motor.get("fecha", "-"))
-        m3.metric("Liga", datos_motor.get("liga_nombre", "-"))
-        m4.metric("Fixture", datos_motor.get("fixture_id", "-"))
-
-        st.caption("El motor toma primero lo que dejaste listo en `Preparar Partido`. Aqui puedes revisar, ajustar o reforzar antes de ejecutarlo.")
-        resumen_cols = st.columns(4)
-        resumen_cols[0].metric("xG listos", sum(1 for v in [manual_preparado.get("xg_local"), manual_preparado.get("xg_visitante")] if str(v or "").strip()), "/2")
-        resumen_cols[1].metric("ELO listos", sum(1 for v in [manual_preparado.get("elo_local"), manual_preparado.get("elo_visitante")] if str(v or "").strip()), "/2")
-        resumen_cols[2].metric("Contexto listo", "Si" if any(str(manual_preparado.get(k) or "").strip() for k in ["motivacion_local", "motivacion_visitante", "contexto_extra"]) else "No")
-        resumen_cols[3].metric("Odds API", "Si" if datos_motor.get("odds", {}).get("resumen") else "No")
-
-        st.markdown("### Entradas manuales que usa el motor")
-        c1, c2 = st.columns(2)
-        xg_local_motor = c1.text_input(
-            "xG local",
-            value=str(manual_preparado.get("xg_local", st.session_state.get("prep_xg_local", "")) or ""),
-            key="motor_xg_local",
-            placeholder="Ej: 1.62",
+    st.markdown("---")
+    st.subheader("Gestión de Suscripciones")
+    
+    # Estadísticas de suscripciones
+    subscription_stats = get_subscription_stats()
+    if subscription_stats:
+        ss_col1, ss_col2, ss_col3, ss_col4 = st.columns(4)
+        free_count = next((s['total'] for s in subscription_stats if s.get('subscription_plan') == 'free'), 0)
+        premium_count = next((s['total'] for s in subscription_stats if s.get('subscription_plan') == 'premium'), 0)
+        vip_count = next((s['total'] for s in subscription_stats if s.get('subscription_plan') == 'vip'), 0)
+        activos_count = sum(s.get('activos', 0) for s in subscription_stats)
+        ss_col1.metric("Free", free_count)
+        ss_col2.metric("Premium", premium_count)
+        ss_col3.metric("VIP", vip_count)
+        ss_col4.metric("Total activos", activos_count)
+    
+    # Formulario para cambiar plan de suscripción
+    with st.form("suscripcion_form"):
+        col_sub1, col_sub2, col_sub3 = st.columns([1.5, 1, 1])
+        
+        # Crear diccionario de opciones para obtener ID fácilmente
+        opciones_usuarios = {f"{row['display_name']} (@{row['username']}) - {row.get('subscription_plan', 'free')}": int(row['id']) for _, row in df_users.iterrows()}
+        lista_opciones = list(opciones_usuarios.keys())
+        
+        usuario_suscripcion = col_sub1.selectbox(
+            "Usuario a modificar",
+            lista_opciones,
+            key="suscripcion_usuario"
         )
-        xg_visit_motor = c2.text_input(
-            "xG visitante",
-            value=str(manual_preparado.get("xg_visitante", st.session_state.get("prep_xg_visitante", "")) or ""),
-            key="motor_xg_visitante",
-            placeholder="Ej: 0.94",
-        )
-        c3, c4 = st.columns(2)
-        elo_local_motor = c3.text_input(
-            "ELO local",
-            value=str(manual_preparado.get("elo_local", st.session_state.get("prep_elo_local", "")) or ""),
-            key="motor_elo_local",
-            placeholder="Ej: 1642",
-        )
-        elo_visit_motor = c4.text_input(
-            "ELO visitante",
-            value=str(manual_preparado.get("elo_visitante", st.session_state.get("prep_elo_visitante", "")) or ""),
-            key="motor_elo_visitante",
-            placeholder="Ej: 1510",
-        )
-        contexto_motor = st.text_area(
-            "Contexto libre",
-            value=(
-                (manual_preparado.get("motivacion_local", st.session_state.get("prep_motivacion_local", "")) or "")
-                + ("\n" if (manual_preparado.get("motivacion_local", st.session_state.get("prep_motivacion_local", "")) or "") else "")
-                + (manual_preparado.get("motivacion_visitante", st.session_state.get("prep_motivacion_visitante", "")) or "")
-                + ("\n" if (manual_preparado.get("contexto_extra", st.session_state.get("prep_contexto_extra", "")) or "") else "")
-                + (manual_preparado.get("contexto_extra", st.session_state.get("prep_contexto_extra", "")) or "")
-            ).strip(),
-            key="motor_contexto_libre",
-            height=100,
-            placeholder="Lesiones, motivacion, noticias o rotaciones. Si tienes Ollama local, puedes estructurarlo aqui mismo.",
-        )
-        col_ctx1, col_ctx2 = st.columns([1.2, 1])
-        if col_ctx1.button("Analizar contexto con Ollama", use_container_width=True):
-            contexto_json, error_ctx = analizar_contexto_ollama(contexto_motor)
-            if error_ctx:
-                st.warning(error_ctx)
-                st.session_state.motor_context_result = None
+        usuario_id = opciones_usuarios.get(usuario_suscripcion, 0)
+        
+        nuevo_plan = col_sub2.selectbox("Nuevo plan", ["free", "premium", "vip"])
+        dias_suscripcion = col_sub3.number_input("Días de suscripción", min_value=1, max_value=365, value=30)
+        
+        aplicar_suscripcion = st.form_submit_button("Aplicar plan")
+        
+        if aplicar_suscripcion:
+            ok = update_subscription(usuario_id, nuevo_plan, dias_suscripcion)
+            if ok:
+                st.success(f"Plan actualizado a {nuevo_plan} por {dias_suscripcion} días")
+                st.rerun()
             else:
-                st.session_state.motor_context_result = contexto_json
-                st.success("Contexto analizado con Ollama local.")
-        if col_ctx2.button("Limpiar contexto estructurado", use_container_width=True):
-            st.session_state.motor_context_result = None
-            st.rerun()
+                st.error("Error al actualizar la suscripción")
 
-        contexto_estructurado = st.session_state.get("motor_context_result")
-        if contexto_estructurado:
-            st.markdown("### Contexto estructurado")
-            st.json(contexto_estructurado)
-
-        manual_motor = {
-            "xg_local": xg_local_motor,
-            "xg_visitante": xg_visit_motor,
-            "elo_local": elo_local_motor,
-            "elo_visitante": elo_visit_motor,
-            "contexto_libre": contexto_motor,
-            "contexto_ollama": contexto_estructurado,
-        }
-
-        if st.button("Ejecutar motor propio", type="primary", use_container_width=True):
-            st.session_state.prepared_match_manual_data = {
-                **manual_preparado,
-                "xg_local": xg_local_motor,
-                "xg_visitante": xg_visit_motor,
-                "elo_local": elo_local_motor,
-                "elo_visitante": elo_visit_motor,
-                "motivacion_local": manual_preparado.get("motivacion_local", ""),
-                "motivacion_visitante": manual_preparado.get("motivacion_visitante", ""),
-                "contexto_extra": contexto_motor,
-            }
-            st.session_state.motor_pick_result = analizar_partido_motor(datos_motor, manual_motor)
-
-        resultado_motor = st.session_state.get("motor_pick_result")
-        if resultado_motor:
-            pick_motor = resultado_motor.get("pick", {})
-            consenso_motor = resultado_motor.get("consenso", {})
-            prob_motor = resultado_motor.get("probabilidad_final", {})
-            decision_motor = resultado_motor.get("decision_motor", {})
-            calidad_input = resultado_motor.get("calidad_input", {})
-            favorito_estructural = resultado_motor.get("favorito_estructural", {})
-            st.markdown("---")
-            st.subheader("Resumen del motor")
-            rm1, rm2, rm3, rm4, rm5 = st.columns(5)
-            rm1.metric("Sistemas a favor", f"{consenso_motor.get('sistemas_a_favor', 0)}/{consenso_motor.get('sistemas_total', 0)}")
-            rm2.metric("No disponibles", consenso_motor.get("sistemas_no_disponibles", 0))
-            rm3.metric("Prob. final", f"{prob_motor.get('final', 0)*100:.1f}%")
-            rm4.metric("Confianza", f"{pick_motor.get('confianza', 0)*100:.1f}%")
-            rm5.metric("Calidad input", f"{int(calidad_input.get('score', 0) or 0)}/100")
-
-            pm1, pm2, pm3, pm4, pm5 = st.columns(5)
-            pm1.metric("Mercado", pick_motor.get("mercado", "-") or "-")
-            pm2.metric("Seleccion", pick_motor.get("seleccion", "-") or "-")
-            pm3.metric("Cuota", f"{pick_motor.get('cuota', 0):.2f}")
-            pm4.metric("EV", f"{pick_motor.get('valor_esperado', 0)*100:.1f}%")
-            pm5.metric("Stake", pick_motor.get("stake_recomendado", "NO BET"))
-
-            if pick_motor.get("emitido"):
-                st.success(pick_motor.get("razonamiento", "Pick emitido por el motor propio."))
-            else:
-                st.warning(pick_motor.get("razonamiento", "El motor no emitio pick."))
-
-            decision_cols = st.columns([1.15, 1, 1])
-            with decision_cols[0]:
-                st.markdown("### Decision")
-                st.write(f"**Estado:** {decision_motor.get('decision', 'NO BET')}")
-                for motivo in decision_motor.get("motivos_clave", []):
-                    st.write(f"- {motivo}")
-            with decision_cols[1]:
-                st.markdown("### Bloqueos")
-                bloqueos = decision_motor.get("bloqueos", [])
-                if bloqueos:
-                    for bloqueo in bloqueos:
-                        st.write(f"- {bloqueo}")
-                else:
-                    st.write("- Sin bloqueos duros")
-            with decision_cols[2]:
-                st.markdown("### Entrada usada")
-                entrada = resultado_motor.get("entrada_utilizada", {})
-                datos_base = entrada.get("datos_base", {})
-                manuales = entrada.get("manuales", {})
-                st.write(f"- Goles base: {datos_base.get('goles_local', 'faltante')} / {datos_base.get('goles_visitante', 'faltante')}")
-                st.write(f"- Forma: {datos_base.get('forma_local', 'faltante')} / {datos_base.get('forma_visitante', 'faltante')}")
-                st.write(f"- xG: {manuales.get('xg_local', 'faltante')} / {manuales.get('xg_visitante', 'faltante')}")
-                st.write(f"- ELO: {manuales.get('elo_local', 'faltante')} / {manuales.get('elo_visitante', 'faltante')}")
-                st.write(f"- Contexto: {manuales.get('contexto_estructurado', 'faltante')}")
-                st.write(f"- Favorito estructural: {str(favorito_estructural.get('dominante', 'parejo')).title()}")
-
-            with st.expander("Ver calidad del input"):
-                st.write(f"Nivel: **{str(calidad_input.get('nivel', 'baja')).title()}**")
-                bloques = calidad_input.get("bloques", {})
-                if bloques:
-                    filas_calidad = [{"Bloque": k, "Puntos": v} for k, v in bloques.items()]
-                    st.dataframe(pd.DataFrame(filas_calidad), width="stretch", hide_index=True)
-                st.write(
-                    f"Señal estructural -> Local: {favorito_estructural.get('score_local', 0)} | "
-                    f"Visitante: {favorito_estructural.get('score_visitante', 0)}"
-                )
-
-            sistemas_rows = []
-            for nombre_sistema, detalle in resultado_motor.get("sistemas", {}).items():
-                fila = {
-                    "Sistema": nombre_sistema,
-                    "Veredicto": detalle.get("veredicto", ""),
-                }
-                for clave, valor in detalle.items():
-                    if clave != "veredicto":
-                        fila[clave] = valor
-                sistemas_rows.append(fila)
-            st.markdown("### Lectura por sistema")
-            st.dataframe(pd.DataFrame(sistemas_rows), width="stretch", hide_index=True)
-
-            candidatos_motor = resultado_motor.get("candidatos", [])
-            if candidatos_motor:
-                st.markdown("### Mercados evaluados por el motor")
-                filas_candidatos = []
-                for item in candidatos_motor:
-                    filas_candidatos.append(
-                        {
-                            "Mercado": item.get("mercado", ""),
-                            "Seleccion": item.get("seleccion", ""),
-                            "Cuota": item.get("cuota", 0),
-                            "Prob. modelo": round((item.get("prob_modelo", 0) or 0) * 100, 1),
-                            "Prob. implicita": round((item.get("prob_implicita", 0) or 0) * 100, 1),
-                            "EV %": round((item.get("ev", 0) or 0) * 100, 1),
-                            "Sistemas a favor": item.get("sistemas_a_favor", 0),
-                            "Fit mercado": round((item.get("market_fit_score", 0) or 0) * 100, 1),
-                            "Penalizacion": round((item.get("guardrail_penalty", 0) or 0) * 100, 1),
-                            "Score": item.get("score_candidato", 0),
-                            "Score ajustado": item.get("score_ajustado", 0),
-                        }
-                    )
-                st.dataframe(pd.DataFrame(filas_candidatos), width="stretch", hide_index=True)
-
-            if resultado_motor.get("riesgos"):
-                st.markdown("### Riesgos")
-                for riesgo in resultado_motor.get("riesgos", []):
-                    st.write(f"- {riesgo}")
-
-            if resultado_motor.get("datos_insuficientes"):
-                st.markdown("### Datos insuficientes")
-                st.write(", ".join(resultado_motor.get("datos_insuficientes", [])))
-
-            with st.expander("Ver salida tecnica del motor"):
-                st.json(resultado_motor)
-
-            if pick_motor.get("emitido"):
-                pick_motor_publicable = {
-                    "partido": resultado_motor.get("partido", ""),
-                    "mercado": pick_motor.get("mercado", ""),
-                    "seleccion": pick_motor.get("seleccion", ""),
-                    "cuota": float(pick_motor.get("cuota", 0) or 0),
-                    "confianza": float(pick_motor.get("confianza", 0) or 0),
-                    "analisis_breve": pick_motor.get("razonamiento", ""),
-                    "competicion": datos_motor.get("liga_nombre", ""),
-                    "ia": "Motor-Propio",
-                }
-                st.markdown("### Publicacion del motor")
-                from pdf_generator import generar_pdf_pick_social
-                from services.telegram_service import telegram_config_ok, enviar_paquete_telegram
-                copy_motor = _copy_pick_social(
-                    pick_motor_publicable,
-                    pick_motor.get("razonamiento", ""),
-                    int(float(pick_motor.get("confianza", 0) or 0) * 100),
-                    float(pick_motor.get("cuota", 0) or 0),
-                )
-                pdf_motor_social = generar_pdf_pick_social(pick_motor_publicable)
-                pub1, pub2, pub3 = st.columns(3)
-                pub1.download_button(
-                    "Descargar copy",
-                    copy_motor,
-                    file_name=f"motor_pick_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                    mime="text/plain",
-                    use_container_width=True,
-                )
-                pub2.download_button(
-                    "Descargar PDF social",
-                    pdf_motor_social,
-                    file_name=f"motor_pick_social_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-                if telegram_config_ok():
-                    if pub3.button("Enviar pack a Telegram", use_container_width=True):
-                        ok, mensaje = enviar_paquete_telegram(
-                            copy_motor,
-                            pdf_motor_social,
-                            f"motor_pick_social_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                            caption=f"Motor propio | {pick_motor_publicable.get('partido', '')}",
-                        )
-                        if ok:
-                            st.success(mensaje)
-                        else:
-                            st.error(mensaje)
-                else:
-                    pub3.caption("Telegram no configurado")
-
-                if st.button("Guardar pick del motor en la base", use_container_width=True):
-                    df_motor = pd.DataFrame([
-                        {
-                            "fecha": resultado_motor.get("fecha", datetime.now().strftime("%Y-%m-%d")),
-                            "partido": resultado_motor.get("partido", ""),
-                            "ia": "Motor-Propio",
-                            "mercado": pick_motor.get("mercado", ""),
-                            "seleccion": pick_motor.get("seleccion", ""),
-                            "cuota": float(pick_motor.get("cuota", 0) or 0),
-                            "confianza": float(pick_motor.get("confianza", 0) or 0),
-                            "analisis_breve": pick_motor.get("razonamiento", ""),
-                            "competicion": datos_motor.get("liga_nombre", ""),
-                            "tipo_pick": "principal",
-                        }
-                    ])
-                    insertados, duplicados, batch_motor = save_picks(df_motor)
-                    auto_pub = _enviar_pick_telegram_si_activo(pick_motor_publicable)
-                    mensaje_extra = ""
-                    if auto_pub:
-                        ok_pub, detalle_pub = auto_pub
-                        mensaje_extra = f" | Telegram: {detalle_pub}"
-                    st.success(f"Motor guardado. Insertados: {insertados} | Duplicados: {duplicados} | batch: {batch_motor}{mensaje_extra}")
 
 # ============================================
 # BARRA LATERAL
@@ -4744,5 +4899,6 @@ with st.sidebar:
 
     st.markdown("---")
     st.success("Jr AI 11 v3.0 | 8 modelos | Multi-IA")
+
 
 

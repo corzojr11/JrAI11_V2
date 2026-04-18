@@ -1,5 +1,6 @@
 import sqlite3
 import pandas as pd
+import json
 from pathlib import Path
 from contextlib import contextmanager
 from config import DB_PATH, BANKROLL_INICIAL_COP, STAKE_PORCENTAJE
@@ -10,6 +11,9 @@ import re
 import unicodedata
 
 logger = logging.getLogger(__name__)
+
+# Versión actual de la estructura de base de datos
+CURRENT_DB_VERSION = "1.3"
 
 
 def _norm_text(texto):
@@ -28,6 +32,7 @@ def get_conn():
     Path("data").mkdir(exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=20.0)  # Timeout para evitar bloqueos
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode=WAL")
     try:
         yield conn
         conn.commit()
@@ -39,127 +44,185 @@ def get_conn():
         conn.close()
 
 def init_db():
-    """Inicializa la base de datos con índices optimizados."""
-    with get_conn() as conn:
-        # Tabla principal de picks
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS picks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha TEXT NOT NULL,
-                partido TEXT NOT NULL,
-                ia TEXT NOT NULL,
-                mercado TEXT NOT NULL,
-                seleccion TEXT NOT NULL,
-                cuota REAL NOT NULL CHECK(cuota >= 1.01 AND cuota <= 100.0),
-                cuota_real REAL DEFAULT 0.0 CHECK(cuota_real >= 1.01 OR cuota_real = 0.0),
-                confianza REAL CHECK(confianza >= 0 AND confianza <= 1),
-                stake REAL NOT NULL DEFAULT 0 CHECK(stake > 0),
-                resultado TEXT DEFAULT 'pendiente' 
-                    CHECK(resultado IN ('ganada','perdida','media','pendiente')),
-                ganancia REAL DEFAULT 0.0,
-                analisis_breve TEXT,
-                competicion TEXT,
-                tipo_handicap TEXT,
-                linea REAL,
-                import_batch TEXT,
-                tipo_pick TEXT DEFAULT 'principal' CHECK(tipo_pick IN ('principal', 'alternativa')),
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(fecha, partido, ia, mercado, seleccion, tipo_pick)
-            );
+    """
+    Inicializa la base de datos con índices optimizados.
+    Es idempotente y solo emite logs cuando hay cambios reales o inicialización física.
+    """
+    try:
+        # 1. Verificar existencia de tablas críticas antes de confiar en la versión
+        with get_conn() as conn:
+            cursor = conn.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name IN ('picks', 'config', 'users')
+            """)
+            tablas_existentes = {row[0] for row in cursor.fetchall()}
+            total_criticas = len(tablas_existentes)
+
+            # 2. Si las tablas existen, verificar versión para evitar ruido
+            if total_criticas == 3:
+                # Usamos una consulta directa para evitar el log de error de get_config_value si fallara
+                res = conn.execute("SELECT value FROM config WHERE key='db_version'").fetchone()
+                db_ver = res[0] if res else '0.0'
+                
+                if db_ver == CURRENT_DB_VERSION:
+                    return
+            else:
+                db_ver = '0.0' # Forzar inicialización completa
+
+            # 3. Creación/Aseguramiento de tablas e índices (idempotente)
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS picks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fecha TEXT NOT NULL,
+                    partido TEXT NOT NULL,
+                    ia TEXT NOT NULL,
+                    mercado TEXT NOT NULL,
+                    seleccion TEXT NOT NULL,
+                    cuota REAL NOT NULL CHECK(cuota >= 1.01 AND cuota <= 100.0),
+                    cuota_real REAL DEFAULT 0.0 CHECK(cuota_real >= 1.01 OR cuota_real = 0.0),
+                    cuota_cierre REAL DEFAULT NULL,
+                    confianza REAL CHECK(confianza >= 0 AND confianza <= 1),
+                    stake REAL NOT NULL DEFAULT 0 CHECK(stake > 0),
+                    resultado TEXT DEFAULT 'pendiente' 
+                        CHECK(resultado IN ('ganada','perdida','media','pendiente')),
+                    ganancia REAL DEFAULT 0.0,
+                    analisis_breve TEXT,
+                    competicion TEXT,
+                    tipo_handicap TEXT,
+                    linea REAL,
+                    import_batch TEXT,
+                    tipo_pick TEXT DEFAULT 'principal' CHECK(tipo_pick IN ('principal', 'alternativa')),
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(fecha, partido, ia, mercado, seleccion, tipo_pick)
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_picks_fecha ON picks(fecha);
+                CREATE INDEX IF NOT EXISTS idx_picks_ia ON picks(ia);
+                CREATE INDEX IF NOT EXISTS idx_picks_resultado ON picks(resultado);
+                CREATE INDEX IF NOT EXISTS idx_picks_tipo ON picks(tipo_pick);
+                CREATE INDEX IF NOT EXISTS idx_picks_partido ON picks(partido);
+                
+                CREATE TABLE IF NOT EXISTS config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE TABLE IF NOT EXISTS cuotas_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    liga_key TEXT NOT NULL,
+                    partido TEXT NOT NULL,
+                    bookmaker TEXT NOT NULL,
+                    cuota_local REAL,
+                    cuota_empate REAL,
+                    cuota_visitante REAL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    ttl_minutes INTEGER DEFAULT 5,
+                    UNIQUE(liga_key, partido, bookmaker)
+                );
+                
+                CREATE TABLE IF NOT EXISTS team_assets (
+                    team_key TEXT PRIMARY KEY,
+                    team_name TEXT NOT NULL,
+                    logo_url TEXT,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS prepared_matches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    partido TEXT NOT NULL,
+                    fecha TEXT,
+                    liga TEXT,
+                    cobertura REAL DEFAULT 0,
+                    ficha_texto TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS motor_pick_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fecha TEXT,
+                    partido TEXT NOT NULL,
+                    competicion TEXT,
+                    mercado TEXT,
+                    seleccion TEXT,
+                    cuota REAL,
+                    probabilidad_modelo REAL,
+                    probabilidad_implicita REAL,
+                    valor_esperado REAL,
+                    confianza REAL,
+                    stake_recomendado TEXT,
+                    emitido INTEGER NOT NULL DEFAULT 0 CHECK(emitido IN (0,1)),
+                    sistemas_a_favor INTEGER DEFAULT 0,
+                    sistemas_total INTEGER DEFAULT 0,
+                    sistemas_no_disponibles INTEGER DEFAULT 0,
+                    calidad_input REAL,
+                    market_fit_score REAL,
+                    guardrail_penalty REAL,
+                    favorito_estructural TEXT,
+                    score_favorito_local REAL,
+                    score_favorito_visitante REAL,
+                    contexto_resumen TEXT,
+                    contexto_perplexity TEXT,
+                    input_snapshot_json TEXT,
+                    sistemas_json TEXT,
+                    candidatos_json TEXT,
+                    decision_json TEXT,
+                    riesgos_json TEXT,
+                    manual_data_json TEXT,
+                    saved_to_picks INTEGER NOT NULL DEFAULT 0 CHECK(saved_to_picks IN (0,1)),
+                    saved_batch TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    email TEXT UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
+                    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+                    must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_login DATETIME
+                );
+            """
+            )
             
-            -- ÍNDICES para optimizar consultas frecuentes
-            CREATE INDEX IF NOT EXISTS idx_picks_fecha ON picks(fecha);
-            CREATE INDEX IF NOT EXISTS idx_picks_ia ON picks(ia);
-            CREATE INDEX IF NOT EXISTS idx_picks_resultado ON picks(resultado);
-            CREATE INDEX IF NOT EXISTS idx_picks_tipo ON picks(tipo_pick);
-            CREATE INDEX IF NOT EXISTS idx_picks_partido ON picks(partido);
-            CREATE INDEX IF NOT EXISTS idx_picks_batch ON picks(import_batch);
-            CREATE INDEX IF NOT EXISTS idx_picks_compuesto ON picks(fecha, ia, resultado);
+            # 4. Datos iniciales (idempotente)
+            conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('bankroll_inicial', ?)", (str(BANKROLL_INICIAL_COP),))
+            conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('stake_porcentaje', ?)", (str(STAKE_PORCENTAJE),))
             
-            -- Tabla de configuración
-            CREATE TABLE IF NOT EXISTS config (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
+            # 5. Migraciones manuales de columnas faltantes
+            _run_structural_migrations(conn)
+
+            # 6. Marcar versión final
+            conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('db_version', ?)", (CURRENT_DB_VERSION,))
             
-            -- Tabla de caché de cuotas (nueva - para Fase 4)
-            CREATE TABLE IF NOT EXISTS cuotas_cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                liga_key TEXT NOT NULL,
-                partido TEXT NOT NULL,
-                bookmaker TEXT NOT NULL,
-                cuota_local REAL,
-                cuota_empate REAL,
-                cuota_visitante REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                ttl_minutes INTEGER DEFAULT 5,
-                UNIQUE(liga_key, partido, bookmaker)
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_cache_lookup ON cuotas_cache(liga_key, partido, bookmaker);
-            CREATE INDEX IF NOT EXISTS idx_cache_timestamp ON cuotas_cache(timestamp);
+            if db_ver == "0.0":
+                logger.info(f"✨ Base de datos creada e inicializada en versión {CURRENT_DB_VERSION}")
+            else:
+                logger.info(f"🔄 Base de datos corregida/actualizada de v{db_ver} a v{CURRENT_DB_VERSION}")
 
-            CREATE TABLE IF NOT EXISTS team_assets (
-                team_key TEXT PRIMARY KEY,
-                team_name TEXT NOT NULL,
-                logo_url TEXT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
+    except Exception as e:
+        logger.error(f"❌ Error crítico inicializando base de datos: {e}")
 
-            CREATE INDEX IF NOT EXISTS idx_team_assets_name ON team_assets(team_name);
+def _run_structural_migrations(conn):
+    """Ejecuta migraciones de columnas individuales para tablas existentes."""
+    user_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "must_change_password" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    if "subscription_plan" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN subscription_plan TEXT DEFAULT 'free'")
+    if "subscription_start" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN subscription_start DATETIME")
+    if "subscription_end" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN subscription_end DATETIME")
 
-            CREATE TABLE IF NOT EXISTS prepared_matches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                partido TEXT NOT NULL,
-                fecha TEXT,
-                liga TEXT,
-                cobertura REAL DEFAULT 0,
-                ficha_texto TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_prepared_matches_partido ON prepared_matches(partido);
-            CREATE INDEX IF NOT EXISTS idx_prepared_matches_fecha ON prepared_matches(fecha);
-
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                email TEXT UNIQUE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin', 'user')),
-                active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-                must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_login DATETIME
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-            CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
-        """)
-        
-        # Insertar configuración inicial si no existe
-        conn.execute("""
-            INSERT OR IGNORE INTO config (key, value) 
-            VALUES ('bankroll_inicial', ?)
-        """, (str(BANKROLL_INICIAL_COP),))
-        
-        conn.execute("""
-            INSERT OR IGNORE INTO config (key, value) 
-            VALUES ('stake_porcentaje', ?)
-        """, (str(STAKE_PORCENTAJE),))
-        
-        conn.execute("""
-            INSERT OR IGNORE INTO config (key, value) 
-            VALUES ('db_version', '1.1')
-        """)
-        
-        logger.info("✅ Base de datos inicializada correctamente con índices optimizados")
-
-        user_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
-        if "must_change_password" not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0")
+    # Migración para la tabla picks
+    picks_cols = [row[1] for row in conn.execute("PRAGMA table_info(picks)").fetchall()]
+    if "cuota_cierre" not in picks_cols:
+        conn.execute("ALTER TABLE picks ADD COLUMN cuota_cierre REAL DEFAULT NULL")
 
 def get_bankroll_inicial():
     """Obtiene el bankroll inicial de forma segura."""
@@ -203,7 +266,9 @@ def get_config_value(key, default=None):
             ).fetchone()
             return row[0] if row else default
     except Exception as e:
-        logger.error(f"Error obteniendo config {key}: {e}")
+        # Solo logueamos si el error NO es que la tabla no existe
+        if "no such table: config" not in str(e).lower():
+            logger.error(f"Error obteniendo config {key}: {e}")
         return default
 
 
@@ -221,7 +286,7 @@ def _verify_password(password: str, stored_hash: str) -> bool:
     return _hash_password(password, salt) == stored_hash
 
 
-def create_user(username, display_name, password, email=None, role="user", must_change_password=False):
+def create_user(username, display_name, password, email=None, role="user", must_change_password=False, subscription_plan="free"):
     if not username or not display_name or not password:
         raise ValueError("username, display_name y password son obligatorios")
     username = str(username).strip().lower()
@@ -232,10 +297,10 @@ def create_user(username, display_name, password, email=None, role="user", must_
         with get_conn() as conn:
             conn.execute(
                 """
-                INSERT INTO users (username, display_name, email, password_hash, role, active, must_change_password)
-                VALUES (?, ?, ?, ?, ?, 1, ?)
+                INSERT INTO users (username, display_name, email, password_hash, role, active, must_change_password, subscription_plan)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                 """,
-                (username, display_name, email, password_hash, role, 1 if must_change_password else 0),
+                (username, display_name, email, password_hash, role, 1 if must_change_password else 0, subscription_plan),
             )
         return True, "Usuario creado correctamente."
     except sqlite3.IntegrityError as e:
@@ -258,7 +323,7 @@ def authenticate_user(username, password):
         with get_conn() as conn:
             row = conn.execute(
                 """
-                SELECT id, username, display_name, email, password_hash, role, active, must_change_password
+                SELECT id, username, display_name, email, password_hash, role, active, must_change_password, subscription_plan, subscription_start, subscription_end
                 FROM users
                 WHERE username = ?
                 """,
@@ -282,9 +347,48 @@ def authenticate_user(username, password):
                 "role": row[5],
                 "active": bool(row[6]),
                 "must_change_password": bool(row[7]),
+                "subscription_plan": str(row[8]) if row[8] else "free",
+                "subscription_start": row[9],
+                "subscription_end": row[10],
             }
     except Exception as e:
         logger.error(f"Error autenticando usuario {username}: {e}")
+        return None
+
+
+def get_user_by_username(username):
+    username = str(username or "").strip().lower()
+    if not username:
+        return None
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, username, display_name, email, role, active, must_change_password, subscription_plan,
+                       subscription_start, subscription_end, created_at, last_login
+                FROM users
+                WHERE username = ?
+                """,
+                (username,),
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "username": row[1],
+                "display_name": row[2],
+                "email": row[3],
+                "role": row[4],
+                "active": bool(row[5]),
+                "must_change_password": bool(row[6]),
+                "subscription_plan": str(row[7]) if row[7] else "free",
+                "subscription_start": row[8],
+                "subscription_end": row[9],
+                "created_at": row[10],
+                "last_login": row[11],
+            }
+    except Exception as e:
+        logger.error(f"Error obteniendo usuario {username}: {e}")
         return None
 
 
@@ -293,7 +397,7 @@ def get_all_users():
         with get_conn() as conn:
             return pd.read_sql(
                 """
-                SELECT id, username, display_name, email, role, active, created_at, last_login, must_change_password
+                SELECT id, username, display_name, email, role, active, created_at, last_login, must_change_password, subscription_plan, subscription_start, subscription_end
                 FROM users
                 ORDER BY created_at DESC, id DESC
                 """,
@@ -517,6 +621,87 @@ def save_picks(df, batch_id):
         logger.error(f"❌ Error guardando picks: {e}")
         raise
 
+
+def save_motor_pick_log(resultado_motor, datos_motor=None, manual_data=None, saved_to_picks=False, saved_batch=None):
+    """Guarda una corrida completa del Motor Propio para aprendizaje y auditoria."""
+    if not resultado_motor:
+        return None
+
+    datos_motor = datos_motor or {}
+    manual_data = manual_data or {}
+    pick = resultado_motor.get("pick", {}) or {}
+    consenso = resultado_motor.get("consenso", {}) or {}
+    calidad = resultado_motor.get("calidad_input", {}) or {}
+    favorito = resultado_motor.get("favorito_estructural", {}) or {}
+    candidatos = resultado_motor.get("candidatos", []) or []
+    top_candidate = candidatos[0] if candidatos else {}
+    contexto = (resultado_motor.get("sistemas", {}) or {}).get("contexto_reglado", {}) or {}
+
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO motor_pick_logs (
+                fecha, partido, competicion, mercado, seleccion, cuota,
+                probabilidad_modelo, probabilidad_implicita, valor_esperado,
+                confianza, stake_recomendado, emitido,
+                sistemas_a_favor, sistemas_total, sistemas_no_disponibles,
+                calidad_input, market_fit_score, guardrail_penalty,
+                favorito_estructural, score_favorito_local, score_favorito_visitante,
+                contexto_resumen, contexto_perplexity,
+                input_snapshot_json, sistemas_json, candidatos_json, decision_json,
+                riesgos_json, manual_data_json, saved_to_picks, saved_batch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resultado_motor.get("fecha"),
+                resultado_motor.get("partido", ""),
+                datos_motor.get("liga_nombre", ""),
+                pick.get("mercado"),
+                pick.get("seleccion"),
+                pick.get("cuota"),
+                pick.get("probabilidad_estimada"),
+                pick.get("probabilidad_implicita"),
+                pick.get("valor_esperado"),
+                pick.get("confianza"),
+                pick.get("stake_recomendado"),
+                1 if pick.get("emitido") else 0,
+                consenso.get("sistemas_a_favor", 0),
+                consenso.get("sistemas_total", 0),
+                consenso.get("sistemas_no_disponibles", 0),
+                calidad.get("score"),
+                top_candidate.get("market_fit_score"),
+                top_candidate.get("guardrail_penalty"),
+                favorito.get("dominante"),
+                favorito.get("score_local"),
+                favorito.get("score_visitante"),
+                contexto.get("resumen"),
+                manual_data.get("contexto_perplexity"),
+                json.dumps(resultado_motor.get("entrada_utilizada", {}), ensure_ascii=True),
+                json.dumps(resultado_motor.get("sistemas", {}), ensure_ascii=True),
+                json.dumps(candidatos, ensure_ascii=True),
+                json.dumps(resultado_motor.get("decision_motor", {}), ensure_ascii=True),
+                json.dumps(resultado_motor.get("riesgos", []), ensure_ascii=True),
+                json.dumps(manual_data, ensure_ascii=True),
+                1 if saved_to_picks else 0,
+                saved_batch,
+            ),
+        )
+        return cursor.lastrowid
+
+
+def get_motor_pick_logs(limit=500):
+    try:
+        with get_conn() as conn:
+            query = "SELECT * FROM motor_pick_logs ORDER BY id DESC"
+            params = ()
+            if limit:
+                query += " LIMIT ?"
+                params = (int(limit),)
+            return pd.read_sql_query(query, conn, params=params)
+    except Exception as e:
+        logger.error(f"Error obteniendo logs del motor: {e}")
+        return pd.DataFrame()
+
 def get_all_picks(incluir_alternativas=False):
     """
     Obtiene todos los picks de forma optimizada.
@@ -654,3 +839,128 @@ def get_stats_resumen():
     except Exception as e:
         logger.error(f"Error obteniendo estadísticas: {e}")
         return {}
+
+
+def update_subscription(user_id, plan, days=30):
+    """
+    Actualiza el plan de suscripción de un usuario.
+    
+    Args:
+        user_id: ID del usuario
+        plan: 'free', 'premium' o 'vip'
+        days: Días de duración (por defecto 30)
+    
+    Returns:
+        True si éxito, False si error
+    """
+    from datetime import datetime, timedelta
+    try:
+        with get_conn() as conn:
+            now = datetime.now()
+            end_date = now + timedelta(days=days)
+            conn.execute(
+                """
+                UPDATE users 
+                SET subscription_plan = ?, 
+                    subscription_start = ?, 
+                    subscription_end = ?
+                WHERE id = ?
+                """,
+                (plan, now, end_date, user_id),
+            )
+        return True
+    except Exception as e:
+        logger.error(f"Error actualizando suscripción: {e}")
+        return False
+
+
+def get_user_subscription(user_id):
+    """
+    Obtiene la información de suscripción de un usuario.
+    
+    Returns:
+        Dict con plan, inicio, fin y estado activo
+    """
+    from datetime import datetime
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT subscription_plan, subscription_start, subscription_end
+                FROM users WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return None
+            
+            plan = str(row[0]) if row[0] else "free"
+            start = row[1]
+            end = row[2]
+            
+            # Verificar si la suscripción está activa
+            is_active = False
+            if plan == "free":
+                is_active = True
+            elif end:
+                try:
+                    end_date = datetime.fromisoformat(str(end)) if isinstance(end, str) else end
+                    is_active = end_date > datetime.now()
+                except:
+                    is_active = True
+            
+            return {
+                "plan": plan,
+                "start": start,
+                "end": end,
+                "is_active": is_active
+            }
+    except Exception as e:
+        logger.error(f"Error obteniendo suscripción: {e}")
+        return None
+
+
+def get_subscription_stats():
+    """
+    Obtiene estadísticas de suscripciones para el admin.
+    """
+    try:
+        with get_conn() as conn:
+            df = pd.read_sql(
+                """
+                SELECT 
+                    subscription_plan,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) as activos
+                FROM users
+                GROUP BY subscription_plan
+                """,
+                conn,
+            )
+            return df.to_dict('records') if not df.empty else []
+    except Exception as e:
+        logger.error(f"Error obteniendo stats de suscripciones: {e}")
+        return []
+
+
+def migrate_subscription_fields():
+    """
+    Migra los campos de suscripción a usuarios existentes.
+    Es una función puente por compatibilidad con app.py, pero el core vive en init_db.
+    """
+    try:
+        with get_conn() as conn:
+            cursor = conn.execute("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            faltantes = [c for c in ["subscription_plan", "subscription_start", "subscription_end"] if c not in columns]
+            if faltantes:
+                if "subscription_plan" not in columns:
+                    conn.execute("ALTER TABLE users ADD COLUMN subscription_plan TEXT DEFAULT 'free'")
+                if "subscription_start" not in columns:
+                    conn.execute("ALTER TABLE users ADD COLUMN subscription_start DATETIME")
+                if "subscription_end" not in columns:
+                    conn.execute("ALTER TABLE users ADD COLUMN subscription_end DATETIME")
+                logger.info(f"Migración: columnas faltantes añadidas ({', '.join(faltantes)})")
+    except Exception:
+        pass

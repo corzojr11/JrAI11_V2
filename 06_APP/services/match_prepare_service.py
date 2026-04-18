@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import re
 import unicodedata
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -10,6 +11,7 @@ from services.league_service import detectar_liga_automatica, get_api_football_l
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
 API_TIMEOUT = 15
 PREFERRED_BOOKMAKERS = ["Bet365", "Pinnacle", "Betano", "Betsson", "1xBet"]
+LOCAL_TZ = ZoneInfo("America/Bogota")
 
 
 def _norm(texto):
@@ -27,26 +29,65 @@ def _headers():
 def _api_get(endpoint, params=None):
     if not API_FOOTBALL_KEY:
         return None, "API_FOOTBALL_KEY no configurada"
+    
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.get(
+                f"{API_FOOTBALL_BASE}{endpoint}",
+                headers=_headers(),
+                params=params or {},
+                timeout=API_TIMEOUT,
+            )
+            
+            # Si es un error transitorio del servidor, intentamos de nuevo
+            if resp.status_code in [500, 502, 503, 504] and attempt < max_retries:
+                continue
+
+            if resp.status_code != 200:
+                error_msg = f"API-Football error HTTP {resp.status_code}"
+                try:
+                    error_detail = resp.json().get("errors", {})
+                    if error_detail:
+                        error_msg += f": {error_detail}"
+                except:
+                    pass
+                return None, error_msg
+
+            data = resp.json()
+            if not isinstance(data, dict):
+                return None, "Respuesta de API no es un objeto JSON valido"
+
+            api_errors = data.get("errors") or {}
+            if api_errors:
+                if isinstance(api_errors, dict):
+                    error_txt = " | ".join(f"{k}: {v}" for k, v in api_errors.items() if v)
+                else:
+                    error_txt = str(api_errors)
+                # Si hay errores en el payload pero hay respuesta parcial, la devolvemos con el error
+                return data.get("response", []), error_txt
+            
+            return data.get("response", []), None
+
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                continue
+            return None, "Timeout agotado tras varios intentos"
+        except Exception as e:
+            if attempt < max_retries:
+                continue
+            return None, f"Error de conexion: {str(e)}"
+    
+    return None, "Fallo desconocido en API"
+
+
+def _fixture_datetime_local(fecha_iso):
+    if not fecha_iso:
+        return None
     try:
-        resp = requests.get(
-            f"{API_FOOTBALL_BASE}{endpoint}",
-            headers=_headers(),
-            params=params or {},
-            timeout=API_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None, f"API-Football respondio {resp.status_code}"
-        data = resp.json()
-        api_errors = data.get("errors") or {}
-        if api_errors:
-            if isinstance(api_errors, dict):
-                error_txt = " | ".join(f"{k}: {v}" for k, v in api_errors.items() if v)
-            else:
-                error_txt = str(api_errors)
-            return data.get("response", []), error_txt
-        return data.get("response", []), None
-    except Exception as e:
-        return None, str(e)
+        return datetime.fromisoformat(str(fecha_iso).replace("Z", "+00:00")).astimezone(LOCAL_TZ)
+    except Exception:
+        return None
 
 
 def parsear_entrada_partido(texto):
@@ -164,6 +205,166 @@ def _buscar_fixture(partido_texto, fecha_iso="", liga_key=None):
     if not mejor or mejor_score <= 1:
         return None, "No se encontro un fixture coincidente en API-Football. Prueba con nombres mas completos, por ejemplo 'Atletico Nacional vs Llaneros'."
     return mejor, None
+
+
+def obtener_partidos_por_fecha(fecha_iso, league_id=None, solo_futuros=True):
+    """
+    Obtiene todos los partidos de una fecha específica.
+    
+    Args:
+        fecha_iso: Fecha en formato YYYY-MM-DD
+        league_id: (Opcional) ID de la liga para filtrar
+        solo_futuros: Si True, solo devuelve partidos que no se han jugado
+    
+    Returns:
+        Lista de partidos con información básica
+    """
+    params = {"date": fecha_iso}
+    if league_id:
+        params["league"] = league_id
+        params["season"] = datetime.strptime(fecha_iso, "%Y-%m-%d").year
+    
+    response, error = _api_get("/fixtures", params)
+    
+    if error or not response:
+        return [], error
+    
+    partidos = []
+    for fixture in response:
+        teams = fixture.get("teams", {})
+        league = fixture.get("league", {})
+        fixture_info = fixture.get("fixture", {})
+        
+        estado = fixture_info.get("status", {}).get("short")
+        
+        # Filtrar por estado - solo mostrar partidos no terminados
+        if solo_futuros:
+            # Estados que significa que el partido YA terminó o está cancelado
+            estados_finalizados = ["FT", "POST", "CANC", "INT", "ABR", "AWD", "WO"]
+            if estado in estados_finalizados:
+                continue
+        
+        partido = {
+            "fixture_id": fixture_info.get("id"),
+            "fecha": fixture_info.get("date"),
+            "fecha_corta": fixture_info.get("date", "")[:10],
+            "hora": fixture_info.get("date", "")[11:16],
+            "estado": estado,
+            "liga": league.get("name"),
+            "liga_id": league.get("id"),
+            "local": teams.get("home", {}).get("name"),
+            "local_id": teams.get("home", {}).get("id"),
+            "visitante": teams.get("away", {}).get("name"),
+            "visitante_id": teams.get("away", {}).get("id"),
+            "goles_local": teams.get("home", {}).get("score", {}).get("full"),
+            "goles_visitante": teams.get("away", {}).get("score", {}).get("full"),
+            "logo_local": teams.get("home", {}).get("logo"),
+            "logo_visitante": teams.get("away", {}).get("logo"),
+        }
+        partidos.append(partido)
+    
+    return partidos, None
+
+
+def obtener_partidos_proximos(dias_adelante=3):
+    """
+    Obtiene los partidos de los próximos X días que aún no se han jugado.
+    Busca desde ayer hasta dias_adelante para cubrir zonas horarias.
+    
+    Args:
+        dias_adelante: Número de días hacia adelante a buscar
+    
+    Returns:
+        Lista de partidos futuros
+    """
+    todos_partidos = []
+    
+    # Buscar desde ayer para cubrir partidos que en UTC ya pasaron pero en local no
+    for dia in range(-1, dias_adelante + 1):
+        fecha = (datetime.now() + timedelta(days=dia)).date()
+        fecha_iso = fecha.isoformat()
+        
+        partidos, error = obtener_partidos_por_fecha(fecha_iso, solo_futuros=True)
+        
+        if not error and partidos:
+            todos_partidos.extend(partidos)
+    
+    # Ordenar por fecha/hora
+    todos_partidos.sort(key=lambda x: x.get("fecha", ""))
+    
+    return todos_partidos, None
+
+
+def obtener_partidos_por_fecha_local(fecha_iso, league_id=None, solo_futuros=True):
+    try:
+        fecha_obj = datetime.strptime(fecha_iso, "%Y-%m-%d").date()
+    except Exception:
+        return [], "Fecha invalida"
+
+    ahora_local = datetime.now(LOCAL_TZ)
+    partidos = []
+    vistos = set()
+    errores = []
+    for offset in (-1, 0, 1):
+        fecha_busqueda = (fecha_obj + timedelta(days=offset)).isoformat()
+        params = {"date": fecha_busqueda}
+        if league_id:
+            params["league"] = league_id
+            params["season"] = datetime.strptime(fecha_busqueda, "%Y-%m-%d").year
+        response, error = _api_get("/fixtures", params)
+        if error:
+            errores.append(error)
+            continue
+        for fixture in response or []:
+            fixture_info = fixture.get("fixture", {})
+            fixture_id = fixture_info.get("id")
+            if fixture_id in vistos:
+                continue
+            dt_local = _fixture_datetime_local(fixture_info.get("date"))
+            if not dt_local or dt_local.date() != fecha_obj:
+                continue
+            estado = fixture_info.get("status", {}).get("short")
+            if estado in ["FT", "AET", "PEN", "POST", "CANC", "INT", "ABR", "AWD", "WO"]:
+                continue
+            if solo_futuros and dt_local <= ahora_local:
+                continue
+
+            teams = fixture.get("teams", {})
+            league = fixture.get("league", {})
+            partidos.append(
+                {
+                    "fixture_id": fixture_id,
+                    "fecha": fixture_info.get("date"),
+                    "fecha_corta": dt_local.strftime("%Y-%m-%d"),
+                    "hora": dt_local.strftime("%H:%M"),
+                    "estado": estado,
+                    "liga": league.get("name"),
+                    "liga_id": league.get("id"),
+                    "local": teams.get("home", {}).get("name"),
+                    "local_id": teams.get("home", {}).get("id"),
+                    "visitante": teams.get("away", {}).get("name"),
+                    "visitante_id": teams.get("away", {}).get("id"),
+                    "goles_local": teams.get("home", {}).get("score", {}).get("full"),
+                    "goles_visitante": teams.get("away", {}).get("score", {}).get("full"),
+                    "logo_local": teams.get("home", {}).get("logo"),
+                    "logo_visitante": teams.get("away", {}).get("logo"),
+                }
+            )
+            vistos.add(fixture_id)
+
+    partidos.sort(key=lambda x: x.get("fecha", ""))
+    return partidos, errores[0] if (not partidos and errores) else None
+
+
+def obtener_partidos_proximos_locales(dias_adelante=3):
+    todos_partidos = []
+    for dia in range(0, dias_adelante + 1):
+        fecha = (datetime.now(LOCAL_TZ) + timedelta(days=dia)).date().isoformat()
+        partidos, error = obtener_partidos_por_fecha_local(fecha, solo_futuros=True)
+        if not error and partidos:
+            todos_partidos.extend(partidos)
+    todos_partidos.sort(key=lambda x: x.get("fecha", ""))
+    return todos_partidos, None
 
 
 def _team_statistics(team_id, league_id, season):
@@ -408,17 +609,50 @@ def _lineups(fixture_id):
     response, error = _api_get("/fixtures/lineups", {"fixture": fixture_id})
     if error or not response:
         return []
+
+    def _player_name(entry):
+        if not isinstance(entry, dict):
+            return ""
+        player = entry.get("player")
+        if isinstance(player, dict):
+            return str(player.get("name", "") or "").strip()
+        # Fallbacks por si la API cambia ligeramente la forma.
+        return str(
+            entry.get("name")
+            or entry.get("player_name")
+            or entry.get("fullname")
+            or ""
+        ).strip()
+
     lineups = []
     for item in response:
-        titulares = [j.get("player", {}).get("name", "") for j in item.get("startXI", [])[:11]]
+        titulares = [_player_name(j) for j in item.get("startXI", [])[:11]]
+        titulares = [x for x in titulares if x]
+        suplentes = [_player_name(j) for j in item.get("substitutes", [])[:12]]
+        suplentes = [x for x in suplentes if x]
+        formacion = str(item.get("formation", "") or "").strip()
+        if formacion.lower() == "none":
+            formacion = ""
         lineups.append(
             {
                 "equipo": item.get("team", {}).get("name", ""),
-                "formacion": item.get("formation", ""),
+                "formacion": formacion,
                 "titulares": titulares,
+                "suplentes": suplentes,
             }
         )
     return lineups
+
+
+def _lineups_have_real_data(lineups):
+    for item in lineups or []:
+        formacion = str(item.get("formacion", "") or "").strip().lower()
+        titulares = [str(x or "").strip() for x in item.get("titulares", []) if str(x or "").strip()]
+        if formacion and formacion != "none":
+            return True
+        if len(titulares) >= 6:
+            return True
+    return False
 
 
 def _odds(fixture_id):
@@ -555,16 +789,18 @@ def preparar_partido_desde_api(partido_texto, fecha_iso="", liga_key=None):
     away_injuries = _injuries(away_id, league_id, season)
     lineups = _lineups(fixture_id)
     odds = _odds(fixture_id)
-    _, standings_err = _api_get("/standings", {"league": league_id, "season": season})
-    _, home_stats_err = _api_get("/teams/statistics", {"team": home_id, "league": league_id, "season": season})
-    _, away_stats_err = _api_get("/teams/statistics", {"team": away_id, "league": league_id, "season": season})
-    _, recent_home_err = _api_get("/fixtures", {"team": home_id, "league": league_id, "season": season, "last": 5})
-    _, recent_away_err = _api_get("/fixtures", {"team": away_id, "league": league_id, "season": season, "last": 5})
-    _, h2h_err = _api_get("/fixtures/headtohead", {"h2h": f"{home_id}-{away_id}", "last": 5})
-    _, inj_home_err = _api_get("/injuries", {"team": home_id, "league": league_id, "season": season})
-    _, inj_away_err = _api_get("/injuries", {"team": away_id, "league": league_id, "season": season})
-    _, lineup_err = _api_get("/fixtures/lineups", {"fixture": fixture_id})
-    _, odds_err = _api_get("/odds", {"fixture": fixture_id})
+    standings_err = None
+    home_stats_err = None
+    away_stats_err = None
+    recent_home_err = None
+    recent_away_err = None
+    h2h_err = None
+    inj_home_err = None
+    inj_away_err = None
+    lineup_err = None
+    odds_err = None
+
+    lineups_ok = _lineups_have_real_data(lineups)
 
     debug_api = {
         "fixture": {"ok": bool(fixture_id), "detalle": str(fixture_id or "")},
@@ -576,7 +812,7 @@ def preparar_partido_desde_api(partido_texto, fecha_iso="", liga_key=None):
         "h2h": {"ok": bool(h2h), "detalle": h2h_err or f"{len(h2h)} partidos"},
         "lesiones_local": {"ok": bool(home_injuries), "detalle": inj_home_err or f"{len(home_injuries)} registros"},
         "lesiones_visitante": {"ok": bool(away_injuries), "detalle": inj_away_err or f"{len(away_injuries)} registros"},
-        "alineaciones": {"ok": bool(lineups), "detalle": lineup_err or f"{len(lineups)} equipos"},
+        "alineaciones": {"ok": lineups_ok, "detalle": lineup_err or ("Sin formacion/titulares utiles" if lineups and not lineups_ok else f"{len(lineups)} equipos")},
         "odds": {"ok": bool(odds.get('bookmakers')), "detalle": odds_err or f"{len(odds.get('bookmakers', []))} bookmakers"},
     }
 
@@ -632,7 +868,8 @@ def _format_lineups(lineups, team_name):
     for item in lineups:
         if _norm(item.get("equipo", "")) == _norm(team_name):
             titulares = ", ".join([x for x in item.get("titulares", []) if x])
-            return f"Formacion: {item.get('formacion', '')}\nTitulares: {titulares or 'Sin titulares confirmados'}"
+            formacion = str(item.get("formacion", "") or "").strip() or "Sin formacion confirmada"
+            return f"Formacion: {formacion}\nTitulares: {titulares or 'Sin titulares confirmados'}"
     return "Sin alineacion probable disponible"
 
 

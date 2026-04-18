@@ -1,0 +1,121 @@
+Auditoría Técnica y Arquitectura Cuantitativa: Motor JrAI11_V2
+A. Diagnóstico Crítico
+El motor JrAI11_V2 presenta una base conceptual interesante al combinar modelos estadísticos clásicos con ajustes cualitativos y de mercado. Sin embargo, desde una perspectiva de arquitectura cuantitativa, la mezcla actual de inputs manuales, modelos paramétricos rígidos y LLMs genera un sistema frágil y propenso a sesgos de confirmación.
+
+Lo que está bien planteado
+La inclusión de un modelo base de Poisson corregido por Dixon-Coles es el estándar mínimo aceptable en la industria para modelar fútbol, ya que aborda la dependencia bivariada de los goles (especialmente en marcadores bajos como 0-0, 1-0, 0-1, 1-1). La comparación contra la probabilidad implícita de las cuotas (mercado eficiente) es el enfoque correcto para buscar Expected Value (EV). Además, la existencia de guardrails demuestra madurez en la gestión de riesgo, evitando la confianza ciega en el output matemático puro.
+
+Debilidades y piezas incompletas
+La principal debilidad estructural es la alta dependencia de inputs manuales (ELO, xG, contexto, tarjetas del árbitro). Esto no solo limita la escalabilidad, sino que introduce un sesgo humano masivo. Si el xG o el ELO se cargan manualmente, el modelo no está descubriendo valor, está reflejando la opinión de quien introduce los datos.
+
+El uso de Ollama/Perplexity para "estructurar contexto" es peligroso en un motor cuantitativo. Los LLMs son excelentes procesadores de lenguaje, pero son pésimos evaluadores de impacto probabilístico. Si Perplexity trae una noticia de una lesión, el LLM no sabe cómo cuantificar exactamente cuánto afecta eso a la línea de gol esperada (xG) del equipo. Esto genera ruido en lugar de señal.
+
+Sesgos y errores estructurales
+Existe un claro sesgo de doble conteo (Double Counting). Si el modelo base ya usa resultados pasados, y luego se le aplica un "índice de forma ponderada" basado en resultados recientes, se está penalizando o premiando a los equipos dos veces por el mismo evento. 
+
+El "soporte parcial" y la "penalización estructural" suenan a parches heurísticos para corregir un modelo base mal calibrado. Si el modelo necesita tantas reglas manuales para no dar picks locos, el problema no es la falta de filtros, sino que la distribución de probabilidad generada por el modelo base es incorrecta.
+
+B. Riesgos Cuantitativos
+Sobreajuste (Overfitting) y Mala Calibración
+El sistema actual tiene un alto riesgo de sobreajuste debido a la cantidad de capas superpuestas (Poisson + Dixon-Coles + ELO + xG + Forma + Árbitro + Contexto LLM). Con tantas variables ajustándose sobre una muestra finita de partidos, el motor encontrará patrones donde solo hay ruido.
+
+La calibración es más importante que la precisión en las apuestas deportivas [1]. Un modelo bien calibrado que predice un evento al 30% acertará exactamente el 30% de las veces a largo plazo. El motor actual, al mezclar probabilidades matemáticas con "calidad del input" y "contexto LLM", destruye la calibración matemática. El output final deja de ser una probabilidad real y se convierte en un "score de confianza" abstracto, lo cual hace imposible calcular el EV real.
+
+Mercados mal tratados
+El mercado de BTTS (Ambos Marcan) y Over/Under derivados puramente de Poisson/Dixon-Coles suelen ser deficientes. Poisson asume que la varianza es igual a la media, lo cual en fútbol rara vez se cumple (sobredispersión). Esto lleva a valorar mal las colas de la distribución (ej. Over 3.5 o Under 1.5).
+
+El tratamiento de las tarjetas mediante un "promedio manual del árbitro" es estadísticamente inválido. Las tarjetas dependen de la interacción entre la rigurosidad del árbitro, la agresividad de los equipos, la importancia del partido y el flujo del juego (quién va ganando). Un promedio simple no captura esta dinámica no lineal.
+
+Bloqueo de picks (Falsos Positivos)
+El motor da demasiados "NO BET" porque los guardrails están actuando como un sistema de veto absoluto en lugar de un ajustador de varianza. Si el modelo detecta un EV del 15% en una cuota 8.00, pero el guardrail lo bloquea por ser "descabellado", el sistema está asumiendo que el mercado siempre tiene la razón en cuotas largas (sesgo de favorito-underdog). Se deben bloquear los picks donde la incertidumbre del modelo (varianza epistémica) es mayor que el EV proyectado, no simplemente porque la cuota sea alta.
+
+C. Mejoras de Modelo
+Para llevar el motor a un nivel profesional, se debe abandonar la arquitectura de "Frankenstein" (sumar capas heurísticas) y pasar a un enfoque de modelado probabilístico integrado.
+
+Modelos a implementar (Orden de prioridad)
+1	Regresión de Poisson Bivariada con Inflación de Ceros (ZIP/ZINB): Reemplazar el Poisson básico. El fútbol tiene más ceros (0 goles) de los que predice una distribución de Poisson normal. Un modelo Binomial Negativo maneja mejor la sobredispersión de los goles.
+2	Modelo de Fuerza de Equipos Basado en xG (No en Goles): Los goles son ruidosos. Entrenar el modelo base utilizando xG a favor y en contra genera predicciones mucho más estables y predictivas a futuro.
+3	Automatización de Datos (API): Eliminar la carga manual. Conectar a APIs (ej. API-Football, StatsBomb) para ingestar ELO, xG, alineaciones y estadísticas en tiempo real.
+
+Simplificación y Eliminación
+•	Eliminar el "Índice de Forma Ponderada": Un modelo ELO bien ajustado o un modelo de decaimiento temporal (Time-Decay) en la regresión ya captura la forma reciente. Mantenerlo es redundante.
+•	Reducir el peso del Contexto LLM: Limitar el uso de Ollama/Perplexity a la detección de ausencias clave (lesiones/sanciones de jugadores Tier 1). Si no falta un jugador que represente más del 10% del xG del equipo, el contexto no debe alterar la probabilidad matemática.
+
+Mejoras por Mercado
+•	1X2 y Handicap: Derivarlos directamente de la simulación de Monte Carlo basada en las medias de goles esperados (xG) ajustadas por el modelo.
+•	Over/Under y BTTS: Utilizar cópulas (Copulas) para modelar la dependencia entre los goles del local y visitante, lo que mejora drásticamente la precisión en mercados de totales respecto a Dixon-Coles.
+•	Favoritos vs Underdogs: Implementar una corrección empírica del sesgo Favourite-Longshot Bias del mercado. Las casas de apuestas inflan el margen en los underdogs. El modelo debe exigir un EV mayor (ej. >8%) para apostar a un underdog, y puede aceptar un EV menor (ej. >3%) para un favorito sólido.
+
+D. Mejoras de Decisión
+El módulo de decisión debe pasar de reglas rígidas (IF/THEN) a una optimización de portafolio basada en riesgo.
+
+Inteligencia del PICK / NO BET
+El exceso de "NO BET" se soluciona implementando el concepto de Fracción de Kelly. En lugar de que el guardrail diga "NO BET", el sistema debe calcular el tamaño de la apuesta (Stake). Si la incertidumbre es alta o la cuota es muy larga, la fórmula de Kelly automáticamente reducirá el stake a niveles fraccionales (ej. 0.1%). 
+
+Se debe establecer un umbral dinámico de EV basado en la liquidez del mercado y la cuota. 
+•	Cuota 1.50 -> EV mínimo exigido: 2%
+•	Cuota 3.00 -> EV mínimo exigido: 5%
+•	Cuota 7.00 -> EV mínimo exigido: 10%
+
+Calibración de Stake y EV
+El stake no debe ser un número entero sugerido arbitrariamente. Debe ser una salida estricta del Criterio de Kelly Fraccional(típicamente 1/4 o 1/8 de Kelly para mitigar la volatilidad). 
+Fórmula:Stake = (Probabilidad_Modelo * Cuota - 1) / (Cuota - 1) * Fraccion_Kelly
+
+Evitar picks locos por cuota alta
+Para evitar que el modelo dispare en cuotas altas descabelladas, se debe implementar un Ajuste Bayesiano hacia el Mercado. Si el modelo dice que un equipo tiene 20% de ganar (cuota justa 5.00) y la casa ofrece cuota 10.00 (10% implícito), la diferencia es tan grande que es probable que el modelo esté equivocado (falta de información). Se debe usar la probabilidad del mercado como un prior bayesiano y actualizarla con la predicción del modelo. Si la divergencia es extrema, la probabilidad final se acercará al mercado, reduciendo el EV y evitando el pick suicida.
+
+E. Aprendizaje del Sistema
+Un motor cuantitativo real no es estático; debe tener un bucle de retroalimentación (Feedback Loop) donde evalúe sus propias predicciones contra la realidad y ajuste sus parámetros.
+
+Variables a guardar por cada Pick (Nivel de Transacción)
+Para que el sistema aprenda, la base de datos debe registrar cada decisión con granularidad absoluta:
+4	timestamp_ejecucion: Cuándo se corrió el modelo.
+5	probabilidad_modelo_raw: La probabilidad pura antes de ajustes.
+6	probabilidad_modelo_final: La probabilidad tras aplicar contexto/guardrails.
+7	probabilidad_implicita_mercado: La cuota de la casa convertida a probabilidad (sin el vig o margen).
+8	ev_proyectado: El valor esperado calculado en el momento.
+9	incertidumbre_input: Score de cuántos datos faltaban o qué tan ruidoso era el contexto.
+10	kelly_stake_sugerido: El stake matemático calculado.
+11	resultado_real_binario: 1 si acertó, 0 si falló.
+12	closing_line_value (CLV): La cuota de cierre del mercado asiático (Pinnacle) justo antes del pitido inicial. Esta es la variable más importante de todo el sistema.
+
+Métricas de Análisis (Post-Mortem)
+El ROI y el Yield son métricas ruidosas a corto plazo. Las métricas "North Star" para evaluar el motor deben ser [2]:
+•	Brier Score: Mide la exactitud de las probabilidades predichas. Un Brier Score más bajo indica que las probabilidades del modelo (ej. 60%) realmente ocurren el 60% de las veces.
+•	CLV Beating Rate: Porcentaje de veces que la cuota tomada fue mejor que la cuota de cierre de Pinnacle. Si el modelo no bate la línea de cierre consistentemente, el ROI positivo es solo suerte a corto plazo.
+•	Expected ROI vs Actual ROI: Si el modelo proyectaba un 8% de EV promedio y el ROI real es -2%, hay un problema grave de calibración o un sesgo sistemático no detectado.
+
+Rediseño del Módulo de Aprendizaje en Python
+El módulo de aprendizaje no debe ser un LLM leyendo resultados. Debe ser un pipeline de Machine Learning (ej. usando scikit-learn o xgboost):
+13	Recolector: Un script diario que actualiza los resultados reales y las cuotas de cierre de los picks emitidos.
+14	Evaluador de Calibración: Un script que agrupa las predicciones en bins (ej. todos los picks donde el modelo dio 40-45% de probabilidad) y verifica si la tasa de acierto real en ese bin fue cercana al 42.5%.
+15	Optimizador de Hiperparámetros: Si se detecta que el modelo sobrevalora sistemáticamente a los favoritos en casa, un optimizador (ej. Optuna) ajusta los pesos del factor de localía en la regresión base para la siguiente semana.
+
+F. Roadmap de Implementación
+Para transformar JrAI11_V2 en un sistema de grado institucional, los cambios deben ser incrementales, priorizando la automatización de datos y la solidez matemática antes que la IA generativa.
+
+Orden Exacto de Implementación
+Fase 1: Saneamiento de Datos y Automatización (Impacto: Muy Alto) Lo que haría primero.
+16	Integrar una API de datos deportivos (ej. API-Football) para ingestar resultados, xG y alineaciones automáticamente. Eliminar la carga manual de ELO y xG.
+17	Implementar un script de cálculo de ELO dinámico en Python que se actualice solo tras cada jornada.
+18	Crear la base de datos de registro de picks con las variables mencionadas en la sección E (especialmente el tracking del CLV).
+
+Fase 2: Refactorización del Modelo Matemático (Impacto: Alto) Lo que haría después.4. Reemplazar el modelo Poisson básico por una Regresión de Poisson Bivariada o Binomial Negativa alimentada por xG en lugar de goles reales.
+5. Eliminar el "Índice de Forma Ponderada" para evitar el doble conteo.
+6. Implementar el Ajuste Bayesiano hacia el Mercado para suavizar las probabilidades extremas y evitar picks descabellados sin necesidad deguardrails rígidos.
+
+Fase 3: Optimización del Módulo de Decisión (Impacto: Alto)7. Reemplazar el sistema binario de PICK/NO BET por un cálculo de Stake basado en el Criterio de Kelly Fraccional.
+8. Establecer umbrales de EV dinámicos según el rango de la cuota (exigir más EV a cuotas más altas).
+
+Fase 4: Reestructuración del Contexto LLM (Impacto: Medio)9. Limitar Ollama/Perplexity exclusivamente a la detección de lesiones de jugadores clave.
+10. Crear un mapeo cuantitativo: Si el LLM detecta que falta el delantero estrella, el sistema resta automáticamente un % predefinido al xG esperado del equipo, integrando el contexto directamente en la matemática.
+
+Fase 5: Despliegue del Módulo de Aprendizaje (Impacto: Medio-Alto a largo plazo)11. Implementar el script de evaluación de calibración (Brier Score) y análisis de CLV.
+12. Configurar un reentrenamiento automático semanal de los pesos del modelo base utilizando los datos más recientes.
+
+Conclusión sobre el Impacto Real
+Los cambios que darán un impacto real e inmediato en la rentabilidad y estabilidad no son añadir más IAs o reglas complejas. El mayor salto de calidad vendrá de eliminar la intervención manual, basar el modelo en xG en lugar de goles, y transicionar de reglas de veto a una gestión de stake basada en Kelly y ajuste Bayesiano. Esto convertirá a JrAI11_V2 de un script de apoyo a un verdadero motor cuantitativo autónomo.
+
+
+Referencias
+[1] Walsh, C., & Joshi, A. (2024). Machine learning for sports betting: Should model selection be based on accuracy or calibration?. Machine Learning with Applications, 100506. https://www.sciencedirect.com/science/article/pii/S266682702400015X [2] Reddit r/algobetting. (2023). Beyond ROI: What are your "North Star" metrics for model evaluation? https://www.reddit.com/r/algobetting/comments/1qx9363/beyond_roi_what_are_your_north_star_metrics_for/
