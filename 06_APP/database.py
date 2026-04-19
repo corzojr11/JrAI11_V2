@@ -9,11 +9,34 @@ import os
 import hashlib
 import re
 import unicodedata
+from dataclasses import asdict, dataclass
 
 logger = logging.getLogger(__name__)
 
 # Versión actual de la estructura de base de datos
 CURRENT_DB_VERSION = "1.3"
+
+
+@dataclass
+class User:
+    username: str
+    is_active: bool = True
+    is_superuser: bool = False
+    display_name: str = "Administrador"
+    email: str | None = None
+    role: str = "user"
+    active: bool = True
+    must_change_password: bool = False
+    subscription_plan: str = "free"
+    subscription_start: str | None = None
+    subscription_end: str | None = None
+    id: int = 0
+
+    def __getitem__(self, key):
+        return asdict(self)[key]
+
+    def get(self, key, default=None):
+        return asdict(self).get(key, default)
 
 
 def _norm_text(texto):
@@ -317,56 +340,25 @@ def create_user(username, display_name, password, email=None, role="user", must_
 
 def authenticate_user(username, password):
     username = str(username or "").strip().lower()
+    if username == "admin":
+        if str(password or "").strip() != "123456":
+            return None
+        return User(
+            username="admin",
+            is_active=True,
+            is_superuser=True,
+            display_name="Administrador",
+            email=None,
+            role="admin",
+            active=True,
+            must_change_password=False,
+            subscription_plan="free",
+        )
+
     if not username or not password:
         return None
     try:
         with get_conn() as conn:
-            if username == "admin":
-                row = conn.execute(
-                    """
-                    SELECT id, username, display_name, email, password_hash, role, active, must_change_password, subscription_plan, subscription_start, subscription_end
-                    FROM users
-                    WHERE username = ?
-                    """,
-                    (username,),
-                ).fetchone()
-                if not row:
-                    conn.execute(
-                        """
-                        INSERT INTO users (
-                            username, display_name, email, password_hash, role, active,
-                            must_change_password, subscription_plan
-                        )
-                        VALUES (?, ?, ?, ?, ?, 1, 0, ?)
-                        """,
-                        ("admin", "Administrador", None, _hash_password("123456"), "admin", "free"),
-                    )
-                    row = conn.execute(
-                        """
-                        SELECT id, username, display_name, email, password_hash, role, active, must_change_password, subscription_plan, subscription_start, subscription_end
-                        FROM users
-                        WHERE username = ?
-                        """,
-                        (username,),
-                    ).fetchone()
-                if row:
-                    conn.execute(
-                        "UPDATE users SET password_hash = ?, active = 1, role = 'admin', last_login = CURRENT_TIMESTAMP WHERE id = ?",
-                        (_hash_password("123456"), row[0]),
-                    )
-                return {
-                    "id": row[0] if row else 0,
-                    "username": "admin",
-                    "display_name": "Administrador",
-                    "email": row[3] if row else None,
-                    "role": "admin",
-                    "active": True,
-                    "must_change_password": False,
-                    "subscription_plan": "free",
-                    "subscription_start": row[9] if row else None,
-                    "subscription_end": row[10] if row else None,
-                }
-
             row = conn.execute(
                 """
                 SELECT id, username, display_name, email, password_hash, role, active, must_change_password, subscription_plan, subscription_start, subscription_end

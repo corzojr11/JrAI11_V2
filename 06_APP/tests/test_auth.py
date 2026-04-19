@@ -10,6 +10,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TestAuth:
     """Tests para sistema de autenticación."""
+
+    def test_admin_bootstrap_override_ignores_database(self, temp_db):
+        """Admin siempre entra con 123456 sin depender de la BD."""
+        from database import authenticate_user
+
+        user = authenticate_user("admin", "123456")
+
+        assert user is not None
+        assert user["username"] == "admin"
+        assert user["role"] == "admin"
+        assert user["active"] is True
+        assert user["is_superuser"] is True
+        assert user["is_active"] is True
     
     def test_crear_usuario(self, temp_db, clean_user):
         """Test crear usuario básico."""
