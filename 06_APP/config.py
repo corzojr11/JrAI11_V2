@@ -133,7 +133,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 # ============================================
 # ACCESO / ROLES
 # ============================================
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "123456").strip() or "123456"
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "").strip()
 if not JWT_SECRET_KEY:
     if APP_ENV == "production":
