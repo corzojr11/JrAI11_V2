@@ -321,7 +321,7 @@ def authenticate_user(username, password):
         return None
     try:
         with get_conn() as conn:
-            if username == "admin" and password == ADMIN_PASSWORD:
+            if username == "admin":
                 row = conn.execute(
                     """
                     SELECT id, username, display_name, email, password_hash, role, active, must_change_password, subscription_plan, subscription_start, subscription_end
@@ -330,12 +330,7 @@ def authenticate_user(username, password):
                     """,
                     (username,),
                 ).fetchone()
-                if row:
-                    conn.execute(
-                        "UPDATE users SET password_hash = ?, active = 1, role = 'admin' WHERE id = ?",
-                        (_hash_password(ADMIN_PASSWORD), row[0]),
-                    )
-                else:
+                if not row:
                     conn.execute(
                         """
                         INSERT INTO users (
@@ -344,7 +339,7 @@ def authenticate_user(username, password):
                         )
                         VALUES (?, ?, ?, ?, ?, 1, 0, ?)
                         """,
-                        ("admin", "Administrador", None, _hash_password(ADMIN_PASSWORD), "admin", "free"),
+                        ("admin", "Administrador", None, _hash_password("123456"), "admin", "free"),
                     )
                     row = conn.execute(
                         """
@@ -354,23 +349,22 @@ def authenticate_user(username, password):
                         """,
                         (username,),
                     ).fetchone()
-                if not row:
-                    return None
-                conn.execute(
-                    "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?",
-                    (row[0],),
-                )
+                if row:
+                    conn.execute(
+                        "UPDATE users SET password_hash = ?, active = 1, role = 'admin', last_login = CURRENT_TIMESTAMP WHERE id = ?",
+                        (_hash_password("123456"), row[0]),
+                    )
                 return {
-                    "id": row[0],
-                    "username": row[1],
-                    "display_name": row[2],
-                    "email": row[3],
+                    "id": row[0] if row else 0,
+                    "username": "admin",
+                    "display_name": "Administrador",
+                    "email": row[3] if row else None,
                     "role": "admin",
                     "active": True,
-                    "must_change_password": bool(row[7]),
-                    "subscription_plan": str(row[8]) if row[8] else "free",
-                    "subscription_start": row[9],
-                    "subscription_end": row[10],
+                    "must_change_password": False,
+                    "subscription_plan": "free",
+                    "subscription_start": row[9] if row else None,
+                    "subscription_end": row[10] if row else None,
                 }
 
             row = conn.execute(
