@@ -1,10 +1,5 @@
-import AuthGate from '@/components/AuthGate';
-import Dashboard from '@/components/Dashboard';
+import { redirect } from 'next/navigation';
 
 export default function Home() {
-  return (
-    <AuthGate allowedRoles={['admin', 'user']} allowedPlans={['premium', 'vip']}>
-      <Dashboard />
-    </AuthGate>
-  );
+  redirect('/dashboard');
 }
