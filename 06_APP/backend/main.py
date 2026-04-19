@@ -63,6 +63,22 @@ async def request_logging_middleware(request: Request, call_next):
         raise
 
 
+def _runtime_identity() -> dict[str, Any]:
+    return {
+        "git_commit": os.getenv("RENDER_GIT_COMMIT")
+        or os.getenv("VERCEL_GIT_COMMIT_SHA")
+        or os.getenv("GIT_COMMIT")
+        or "unknown",
+        "git_branch": os.getenv("RENDER_GIT_BRANCH")
+        or os.getenv("VERCEL_GIT_COMMIT_REF")
+        or os.getenv("GIT_BRANCH")
+        or "unknown",
+        "service": os.getenv("RENDER_SERVICE_NAME")
+        or os.getenv("RENDER_SERVICE_ID")
+        or "unknown",
+    }
+
+
 class PrepareMatchRequest(BaseModel):
     partido_texto: str
     fecha_iso: str = ""
@@ -432,7 +448,7 @@ def _analysis_summary(df: pd.DataFrame) -> dict[str, Any]:
 
 @app.get("/")
 async def root():
-    return {"ok": True, "service": "Jr AI 11 Backend", "docs": "/docs"}
+    return {"ok": True, "service": "Jr AI 11 Backend", "docs": "/docs", "runtime": _runtime_identity()}
 
 @app.get("/picks")
 @app.get("/api/picks")
@@ -562,7 +578,9 @@ async def get_preparation_history(
 @app.get("/api/api-status")
 async def get_api_status():
     try:
-        return _build_api_status_snapshot()
+        snapshot = _build_api_status_snapshot()
+        snapshot["runtime"] = _runtime_identity()
+        return snapshot
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching API status: {e}")
 
